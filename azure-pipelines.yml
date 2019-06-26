@@ -5,10 +5,14 @@ jobs:
     displayName: "V Linux Build"
     steps:
       - script: |
+        sudo apt install libglfw3 libglfw3-dev libfreetype6-dev libcurl3-dev
         displayName: 'Install Dependencies'
       - script: |
-          cd compiler && make
+        cd compiler && make
         displayName: 'Build V'
+      - script: |
+        make test
+        displayName: 'Run Tests'
   - job: WindowsBuild
     pool: 
       vmImage: 'vs2017-win2016'
@@ -21,5 +25,5 @@ jobs:
       - script: |
         displayName: 'Install Dependencies'
       - script: |
-          cd compiler && make
+          cd compiler && make && make test
         displayName: 'Build V'

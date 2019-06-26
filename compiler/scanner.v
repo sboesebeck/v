@@ -128,16 +128,17 @@ fn (s mut Scanner) skip_whitespace() {
 	// }
 }
 
-fn (s mut Scanner) get_until_start(pos int) string {
+fn (s mut Scanner) get_var_name(pos int) string {
 	mut pos_start = pos
-	for ; pos_start >= 0 && s.text[pos_start] != `\n`; pos_start-- {}
-	for ; pos_start < pos && (s.text[pos_start] == ` ` || s.text[pos_start] == `\n`); pos_start++ {}
+
+	for ; pos_start >= 0 && s.text[pos_start] != `\n` && s.text[pos_start] != `;`; pos_start-- {}
+	pos_start++
 	return s.text.substr(pos_start, pos)
 }
 
 // CAO stands for Compound Assignment Operators  (e.g '+=' )
 fn (s mut Scanner) cao_change(operator string) {
-	s.text = s.text.substr(0, s.pos - 2) + ' = ' + s.get_until_start(s.pos - 2) + ' ' + operator + s.text.substr(s.pos + 1, s.text.len)
+	s.text = s.text.substr(0, s.pos - 1) + ' = ' + s.get_var_name(s.pos - 1) + ' ' + operator + ' ' + s.text.substr(s.pos + 1, s.text.len)
 }
 
 fn (s mut Scanner) scan() ScanRes {
@@ -353,14 +354,6 @@ fn (s mut Scanner) scan() ScanRes {
 			s.pos--
 		}
 		return scan_res(HASH, hash.trim_space())
-	case `@`:
-		start := s.pos + 1
-		for s.text[s.pos] != `\n` {
-			s.pos++
-		}
-		s.line_nr++
-		at := s.text.substr(start, s.pos)
-		return scan_res(AT, at.trim_space())
 	case `>`:
 		if s.text[s.pos + 1] == `=` {
 			s.pos++
