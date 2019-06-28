@@ -8,7 +8,7 @@ import os
 import time
 
 const (
-	Version = '0.1.4'
+	Version = '0.1.8'
 )
 
 // TODO no caps
@@ -82,7 +82,7 @@ mut:
 	show_c_cmd bool // `v -show_c_cmd` prints the C command to build program.v.c
 	sanitize   bool // use Clang's new "-fsanitize" option
 	out_name   string // "program.exe"
-	is_prod    bool // use "-O2" and skip printlns (TODO I don't thik many people want printlns to disappear in prod buidls)
+	is_prod    bool // use "-O2"
 	is_repl    bool
 	vroot      string
 }
@@ -91,7 +91,7 @@ fn main() {
 	// There's no `flags` module yet, so args have to be parsed manually
 	args := os.args
 	// Print the version and exit.
-	if 'version' in args {
+	if '-v' in args || 'version' in args {
 		println('V $Version')
 		return
 	}
@@ -131,7 +131,7 @@ fn main() {
 		return
 	}
 	// V with no args? REPL
-	if args.len < 2 {
+	if args.len < 2 || (args.len == 2 && args[1] == '-') {
 		run_repl()
 		return
 	}
@@ -257,7 +257,8 @@ void init_consts();')
 	if c.build_mode == EMBED_VLIB || c.build_mode == DEFAULT_MODE {
 		// If we declare these for all modes, then when running `v a.v` we'll get
 		// `/usr/bin/ld: multiple definition of 'total_m'`
-		cgen.genln('i64 total_m = 0; // For counting total RAM allocated')
+		// TODO
+		//cgen.genln('i64 total_m = 0; // For counting total RAM allocated')
 		cgen.genln('int g_test_ok = 1; ')
 		if c.table.imports.contains('json') {
 			cgen.genln(' 
@@ -342,7 +343,7 @@ string _STR_TMP(const char *fmt, ...) {
 		if !c.table.main_exists() && !c.is_test {
 			// It can be skipped in single file programs
 			if c.is_script {
-				println('Generating main()...')
+				//println('Generating main()...')
 				cgen.genln('int main() { $cgen.fn_main; return 0; }')
 			}
 			else {
@@ -371,14 +372,14 @@ string _STR_TMP(const char *fmt, ...) {
 		cgen.genln('return 1; }')
 	}
 	cgen.save()
-	c.log('flags=')
 	if c.is_verbose {
+		c.log('flags=')
 		println(c.table.flags)
 	}
 	c.cc()
 	if c.is_test || c.is_run {
 		if true || c.is_verbose {
-			println('============running $c.out_name==============================')
+			println('============ running $c.out_name ============') 
 		}
 		mut cmd := if c.out_name.starts_with('/') {
 			c.out_name
@@ -766,7 +767,7 @@ fn new_v(args[]string) *V {
 	'string_builder.v',
 	]
 	// Location of all vlib files
-	mut lang_dir = ''
+	mut lang_dir := ''
 	// First try fetching it from VROOT if it's defined
 	for { // TODO tmp hack for optionals
 	vroot_path := TmpPath + '/VROOT'
@@ -857,7 +858,11 @@ fn run_repl() []string {
 	mut lines := []string
 	for {
 		print('>>> ')
-		mut line := os.get_line().trim_space()
+		mut line := os.get_raw_line()
+		if line.trim_space() == '' && line.ends_with('\n') {
+			continue
+		}
+		line = line.trim_space()
 		if line == '' {
 			break
 		}
@@ -865,10 +870,9 @@ fn run_repl() []string {
 		// but don't add this print call to the `lines` array,
 		// so that it doesn't get called during the next print.
 		if line.starts_with('print') {
-			// TODO remove this once files without main compile correctly
 			void_line := line.substr(line.index('(') + 1, line.len - 1)
 			lines << void_line
-			source_code := 'fn main(){' + lines.join('\n') + '\n' + line + '}'
+			source_code := lines.join('\n') + '\n' + line 
 			os.write_file(file, source_code)
 			mut v := new_v( ['v', '-repl', file])
 			v.compile()
@@ -885,26 +889,19 @@ fn run_repl() []string {
 // This definitely needs to be better :)
 const (
 	HelpText = '
-- Build a V program:
-v file.v
+Usage: v [options] [file | directory]
 
-- Get current V version:
-v version
-
-- Build an optimized executable:
-v -prod file.v
-
-- Specify the executable\'s name:
-v -o program file.v 
-
-- Build and execute a V program:
-v run file.v
-
-- Obfuscate the resulting binary:
-v -obf -prod build file.v
-
-- Test: 
-v string_test.v 
+Options:
+  -                 Read from stdin (Default; Interactive mode if in a tty)
+  -h, --help, help  Display this information.
+  -v, version       Display compiler version.
+  -prod             Build an optimized executable.
+  -o <file>         Place output into <file>.
+  -obf              Obfuscate the resulting binary.
+  run               Build and execute a V program.
+                    You can add arguments after file name.
+Files:
+  <file>_test.v     Test file.
 '
 )
 

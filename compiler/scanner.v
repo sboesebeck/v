@@ -129,7 +129,7 @@ fn (s mut Scanner) skip_whitespace() {
 }
 
 fn (s mut Scanner) get_var_name(pos int) string {
-	mut pos_start = pos
+	mut pos_start := pos
 
 	for ; pos_start >= 0 && s.text[pos_start] != `\n` && s.text[pos_start] != `;`; pos_start-- {}
 	pos_start++
@@ -138,7 +138,7 @@ fn (s mut Scanner) get_var_name(pos int) string {
 
 // CAO stands for Compound Assignment Operators  (e.g '+=' )
 fn (s mut Scanner) cao_change(operator string) {
-	s.text = s.text.substr(0, s.pos - 1) + ' = ' + s.get_var_name(s.pos - 1) + ' ' + operator + ' ' + s.text.substr(s.pos + 1, s.text.len)
+	s.text = s.text.substr(0, s.pos - operator.len) + ' = ' + s.get_var_name(s.pos - operator.len) + ' ' + operator + ' ' + s.text.substr(s.pos + 1, s.text.len)
 }
 
 fn (s mut Scanner) scan() ScanRes {
@@ -212,6 +212,11 @@ fn (s mut Scanner) scan() ScanRes {
 			// println('INSIDE STRING .dollar var=$name')
 			s.dollar_end = true
 			s.dollar_start = false
+		}
+		if s.pos == 0 && next_char == ` ` {
+			s.pos++
+			//If a single letter name at the start of the file, increment
+			//Otherwise the scanner would be stuck at s.pos = 0
 		}
 		return scan_res(NAME, name)
 	}
@@ -654,3 +659,49 @@ fn is_name_char(c byte) bool {
 	return c.is_letter() || c == `_`
 }
 
+fn (s mut Scanner) get_opening_bracket() int {
+	mut pos := s.pos
+	mut parentheses := 0
+	mut inside_string := false
+
+	for pos > 0 && s.text[pos] != `\n` {
+		if s.text[pos] == `)` && !inside_string {
+			parentheses++
+		}
+		if s.text[pos] == `(` && !inside_string {
+			parentheses--
+		}
+		if s.text[pos] == `\'` && s.text[pos - 1] != `\\` && s.text[pos - 1] != `\`` {
+			inside_string = !inside_string
+		}
+		if parentheses == 0 {
+			break
+		}
+		pos--
+	}
+	return pos
+}
+
+// Foo { bar: 3, baz: 'hi' } => '{ bar: 3, baz: "hi" }'
+fn (s mut Scanner) create_type_string(T Type, name string) {
+	line := s.line_nr
+	inside_string := s.inside_string
+	mut newtext := '\'{ '
+	start := s.get_opening_bracket() + 1
+	end := s.pos
+	for i, field in T.fields {
+		if i != 0 {
+			newtext += ', '
+		}
+		newtext += '$field.name: ' + '$${name}.${field.name}'
+	}
+	newtext += ' }\''
+	s.text = s.text.substr(0, start) + newtext + s.text.substr(end, s.text.len)
+	s.pos = start - 2
+	s.line_nr = line
+	s.inside_string = inside_string
+}
+
+fn (p mut Parser) create_type_string(T Type, name string) {
+	p.scanner.create_type_string(T, name)
+}

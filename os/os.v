@@ -24,28 +24,51 @@ struct FileInfo {
 import const (
 	SEEK_SET
 	SEEK_END
+	SA_SIGINFO
+	SIGSEGV
+
+S_IFMT
+S_IFDIR
 )
 
-fn C.getline(voidptr, voidptr, voidptr) int
+struct C.stat {
+	st_size int
+	st_mode int
+}
 
+struct C.DIR {
+
+}
+
+struct C.dirent {
+	d_name byteptr
+
+}
+
+struct C.sigaction {
+mut:
+	sa_mask int
+	sa_sigaction int
+	sa_flags   int
+}
+
+fn C.getline(voidptr, voidptr, voidptr) int
 fn C.ftell(fp voidptr) int
+fn C.getenv(byteptr) byteptr
+fn C.sigaction(int, voidptr, int)
 
 fn todo_remove(){}
 
-fn init_os_args(argc int, _argv *byteptr) []string {
+fn init_os_args(argc int, argv *byteptr) []string {
 	mut args := []string
-	# char** argv = (char**) _argv;
 	for i := 0; i < argc; i++ {
-		arg := ''
-		//arg := tos(argv[i], strlen(argv[i])) 
-		# arg = tos((char**)(argv[i]), strlen((char**)(argv[i])));
-		args << arg
+		args << string(argv[i])
 	}
 	return args
 }
 
 fn parse_windows_cmd_line(cmd byteptr) []string {
-	s := tos2(cmd)
+	s := string(cmd)
 	return s.split(' ')
 }
 
@@ -69,57 +92,17 @@ pub fn read_file(path string) ?string {
 	return res
 }
 
-/* 
-// TODO 
-fn (f File) read_rune() string {
-	# if (!f.cfile) return tos("", 0);
-	c := malloc(1)
-	C.fread(c, 1, 1, f.cfile)
-	return tos(c, 1)
-}
-*/ 
-
 // file_size returns the size of the file located in `path`.
 pub fn file_size(path string) int {
-	# struct stat s;
-	# stat(path.str, &s);
-	// # if (S_ISLNK(s.st_mode)) return -1;
-	# return s.st_size;
-	// //////////////////////
-	# FILE *f = fopen(path.str, "r");
-	# if (!f) return 0;
-	# fseek(f, 0, SEEK_END);
-	# long fsize = ftell(f);
-	// # fseek(f, 0, SEEK_SET);  //same as rewind(f);
-	# rewind(f);
-	# return fsize;
-	return 0
+	s := C.stat{}
+	C.stat(path.str, &s)
+	return s.st_size
 }
 
 pub fn mv(old, new string) {
 	C.rename(old.cstr(), new.cstr())
 }
 
-/* 
-pub fn file_last_mod_unix(path string) int {
-	# struct stat attr;
-	# stat(path.str, &attr);
-	# return attr.st_mtime ;
-	return 0
-}
-
-pub fn file_last_mod_time(path string) time.Time {
-	return time.now()
-	q := C.tm{}
-	# struct stat attr;
-	# stat(path.str, &attr);
-	// # q = attr.st_mtime;
-	# struct tm * now = localtime(&attr.st_mtime);
-	# q = *now;
-	# printf("Last modified time: %s", ctime(&attr.st_mtime));
-	return time.convert_ctime(q)
-}
-*/
 // read_lines reads the file in `path` into an array of lines.
 // TODO return `?[]string` TODO implement `?[]` support
 pub fn read_lines(path string) []string {
@@ -156,13 +139,6 @@ fn read_ulines(path string) []ustring {
 	}
 	return ulines
 }
-
-/* 
-struct Reader {
-	fp *FILE
-}
-*/ 
-
 
 // fn open(file string) File? {
 // return open_file(file)
@@ -243,7 +219,9 @@ pub fn (f File) close() {
 fn close_file(fp *FILE) {
 	$if windows {
 	}
-	# if (fp)
+	if isnil(fp) {
+		return
+	}
 	C.fclose(fp)
 }
 
@@ -283,49 +261,29 @@ pub fn exec(cmd string) string {
 	return res.trim_space()
 }
 
-/* 
-// TODO 
-fn system_into_lines(s string) []string {
-	mut res := []string
-	cmd := '$s 2>&1'
-	max := 5000
-	$if windows {
-		# FILE* f = _popen(cmd.str, "r");
-	}
-	$else {
-		# FILE* f = popen(cmd.str, "r");
-	}
-	# char * buf = malloc(sizeof(char) * max);
-	# while (fgets(buf, max, f) != NULL)
-	{
-		val := ''
-		# buf[strlen(buf) - 1] = '\0'; // eat the newline fgets() stores
-		# val=tos_clone(buf);
-		res << val
-	}
-	return res
-}
-*/ 
-
 // `getenv` returns the value of the environment variable named by the key.
 pub fn getenv(key string) string {
 	s := C.getenv(key.cstr())
 	if isnil(s) {
 		return ''
 	}
-	return tos2(s)
+	return string(s)
+}
+
+pub fn setenv(name string, value string, overwrite bool) int {
+  return C.setenv(name.cstr(), value.cstr(), overwrite)
+}
+
+pub fn unsetenv(name string) int {
+  return C.unsetenv(name.cstr())
 }
 
 // `file_exists` returns true if `path` exists.
 pub fn file_exists(path string) bool {
-	res := false
 	$if windows {
-		# res = _access( path.str, 0 ) != -1 ;
+		return C._access( path.str, 0 ) != -1
 	}
-	$else {
-		# res = access( path.str, 0 ) != -1 ;
-	}
-	return res
+	return C.access( path.str, 0 ) != -1
 }
 
 pub fn dir_exists(path string) bool {
@@ -408,14 +366,32 @@ pub fn filename(path string) string {
 }
 
 // get_line returns a one-line string from stdin 
+//u64 is used because C.getline needs a size_t as second argument
+//Otherwise, it would cause a valgrind warning and may be dangerous
+//Malloc takes an int as argument so a cast has to be made
 pub fn get_line() string {
-	max := 256
-	buf := malloc(max)
+	max := u64(256)
+	buf := malloc(int(max))
 	nr_chars := C.getline(&buf, &max, stdin)
 	if nr_chars == 0 {
 		return ''
 	}
-	return tos(buf, nr_chars - 1)
+	if buf[nr_chars - 1] == `\n` /* newline */ {
+		return tos(buf, nr_chars - 1)
+	}
+	/* To prevent cutting end of line if no newline */
+	return tos(buf, nr_chars)
+}
+
+// get_raw_line returns a one-line string from stdin along with '\n' if there is any
+pub fn get_raw_line() string {
+	max := u64(256)
+	buf := malloc(int(max))
+	nr_chars := C.getline(&buf, &max, stdin)
+	if nr_chars == 0 {
+		return ''
+	}
+	return tos(buf, nr_chars)
 }
 
 pub fn user_os() string {
@@ -459,11 +435,11 @@ fn on_segfault(f voidptr) {
 		return
 	}
 	$if mac {
-		# struct sigaction sa;
-		# memset(&sa, 0, sizeof(struct sigaction));
-		# sigemptyset(&sa.sa_mask);
-		# sa.sa_sigaction = f;
-		# sa.sa_flags   = SA_SIGINFO;
-		# sigaction(SIGSEGV, &sa, 0);
+		mut sa := C.sigaction{}
+		C.memset(&sa, 0, sizeof(sigaction))
+		C.sigemptyset(&sa.sa_mask)
+		sa.sa_sigaction = f
+		sa.sa_flags   = SA_SIGINFO
+		C.sigaction(SIGSEGV, &sa, 0)
 	}
 }

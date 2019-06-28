@@ -1,4 +1,4 @@
-# The V Programming Language 0.1.2
+# The V Programming Language 0.1.x
 
 [![Build Status](https://dev.azure.com/alexander0785/vlang/_apis/build/status/vlang-CI?branchName=master)](https://dev.azure.com/alexander0785/vlang/_build/latest?definitionId=1&branchName=master) [![Build Status](https://travis-ci.org/vlang/v.svg?branch=master)](https://travis-ci.org/vlang/v)
 
@@ -19,7 +19,7 @@ Installing V: https://github.com/vlang/v#installing-v-from-source
 - Fast compilation: ~100k loc/s right now, ~1.2 million loc/s once x64 generation is mature enough
 - Easy to develop: V compiles itself in less than a second
 - Performance: within 5% of C
-- Safety: no null, no globals, no UB, immutability by default
+- Safety: no null, no globals, no undefined behavior, immutability by default
 - C to V translation
 - Hot code reloading
 - Powerful UI and graphics libraries
@@ -34,7 +34,7 @@ GitHub marks V's code as written in Go. It's actually written in V, GitHub doesn
 
 The compilation is temporarily slower for this release:
 
-- Debug builds are used (use `v -prod -o v` to get faster compilation).
+- Debug builds are used (use `./v -prod -o v .` to get faster compilation).
 - vlib is recompiled with every program you build.
 - The new formatter runs on every single token and slows the compiler down by ~20%. This will be taken care of.
 - There are a lot of known issues that are quick to fix (like function lookups being O(n)).
@@ -60,7 +60,7 @@ make
 Or build without make:
 ```bash
 # Download the V compiler's source translated to C
-wget https://raw.githubusercontent.com/vlang/vc/master/v.c  
+curl -sO https://raw.githubusercontent.com/vlang/vc/master/v.c
 cc -std=gnu11 -w -o v v.c  # Build it with Clang or GCC
 ./v -o v .                 # Use the resulting V binary to build V from V source
 ./v -o v .                 # Build the compiler again to make sure it works
@@ -73,6 +73,16 @@ You can create a symlink so that it's globally available:
 ```
 sudo ln -s [path to V repo]/compiler/v /usr/local/bin/v
 ```
+
+V is being constantly updated. To update V, simply run
+
+```
+git pull origin master
+cd compiler/
+make clean
+make
+```
+
 
 ### Windows
 

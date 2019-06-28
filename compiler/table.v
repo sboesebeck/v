@@ -210,7 +210,7 @@ fn (table &Table) known_type(typ string) bool {
 	return false
 }
 
-// TODO PERF O(N) this slows down the comiler a lot!
+// TODO PERF O(N) this slows down the compiler a lot!
 fn (t &Table) find_fn(name string) Fn {
 	for f in t.fns {
 		if f.name == name {
@@ -220,7 +220,7 @@ fn (t &Table) find_fn(name string) Fn {
 	return Fn{}
 }
 
-// TODO PERF O(N) this slows down the comiler a lot!
+// TODO PERF O(N) this slows down the compiler a lot! 
 fn (t &Table) known_fn(name string) bool {
 	for f in t.fns {
 		if f.name == name {
@@ -249,10 +249,9 @@ fn (t mut Table) register_type(typ string) {
 	// if t.types.filter( _.name == typ.name).len > 0 {
 	// return
 	// }
-	datyp := Type {
+	t.types << Type {
 		name: typ
 	}
-	t.types << datyp
 }
 
 fn (p mut Parser) register_type_with_parent(strtyp, parent string) {
@@ -442,7 +441,7 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 		return true
 	}
 	// Todo void* allows everything right now
-	if got.eq('void*') || expected.eq('void*') {
+	if got=='void*' || expected=='void*' {
 		// if !p.builtin_pkg {
 		if p.is_play {
 			return false
@@ -451,17 +450,17 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 	}
 	// TODO only allow numeric consts to be assigned to bytes, and
 	// throw an error if they are bigger than 255
-	if got.eq('int') && expected.eq('byte') {
+	if got=='int' && expected=='byte' {
 		return true
 	}
-	if got.eq('byteptr') && expected.eq('byte*') {
+	if got=='byteptr' && expected=='byte*' {
 		return true
 	}
-	if got.eq('int') && expected.eq('byte*') {
+	if got=='int' && expected=='byte*' {
 		return true
 	}
 	// byteptr += int
-	if got.eq('int') && expected.eq('byteptr') {
+	if got=='int' && expected=='byteptr' {
 		return true
 	}
 	if got == 'Option' && expected.starts_with('Option_') {
@@ -487,7 +486,7 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 		// return true
 		// }
 		// Allow pointer arithmetic
-		if expected.eq('void*') && got.eq('int') {
+		if expected=='void*' && got=='int' {
 			return true
 		}
 	}
@@ -644,7 +643,7 @@ fn (table &Table) cgen_name_type_pair(name, typ string) string {
 	}
 	// TODO tm hack, do this for all C struct args
 	else if typ == 'tm' {
-		return 'struct tm $name'
+		return 'struct /*TM*/ tm $name'
 	}
 	return '$typ $name'
 }
