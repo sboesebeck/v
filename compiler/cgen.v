@@ -31,9 +31,15 @@ mut:
 }
 
 fn new_cgen(out_name_c string) *CGen {
+	path:='$TmpPath/$out_name_c'
+	out := os.create(path) or {
+		println('failed to create $path') 
+		return &CGen{} 
+} 
+	 
 	gen := &CGen {
-		out_path: '$TmpPath/$out_name_c'
-		out: os.create('$TmpPath/$out_name_c')
+		out_path: path 
+		out: out 
 	}
 	return gen
 }
@@ -68,7 +74,7 @@ fn (g mut CGen) gen(s string) {
 
 fn (g mut CGen) save() {
 	s := g.lines.join('\n')
-	g.out.appendln(s)
+	g.out.writeln(s)
 	g.out.close()
 }
 
@@ -151,10 +157,9 @@ fn (g mut CGen) register_thread_fn(wrapper_name, wrapper_text, struct_text strin
 fn (c mut V) prof_counters() string {
 	mut res := []string
 	// Global fns
-	for f in c.table.fns {
-		res << 'double ${c.table.cgen_name(f)}_time;'
-		// println(f.name)
-	}
+	//for f in c.table.fns {
+		//res << 'double ${c.table.cgen_name(f)}_time;'
+	//}
 	// Methods
 	for typ in c.table.types {
 		// println('')
@@ -170,11 +175,10 @@ fn (c mut V) prof_counters() string {
 fn (p mut Parser) print_prof_counters() string {
 	mut res := []string
 	// Global fns
-	for f in p.table.fns {
-		counter := '${p.table.cgen_name(f)}_time'
-		res << 'if ($counter) printf("%%f : $f.name \\n", $counter);'
-		// println(f.name)
-	}
+	//for f in p.table.fns {
+		//counter := '${p.table.cgen_name(f)}_time'
+		//res << 'if ($counter) printf("%%f : $f.name \\n", $counter);'
+	//}
 	// Methods
 	for typ in p.table.types {
 		// println('')

@@ -26,7 +26,7 @@ Installing V: https://github.com/vlang/v#installing-v-from-source
 - Easy cross compilation
 - REPL
 
-V 1.0 release is planned for December 2019.
+V 1.0 release is planned for December 2019. Right now V is in an alpha stage. 
 
 ## Notes
 
@@ -34,52 +34,47 @@ GitHub marks V's code as written in Go. It's actually written in V, GitHub doesn
 
 The compilation is temporarily slower for this release:
 
-- Debug builds are used (use `./v -prod -o v .` to get faster compilation).
+- Debug builds are used (use `./v -prod -o v compiler` to get faster compilation).
 - vlib is recompiled with every program you build.
 - The new formatter runs on every single token and slows the compiler down by ~20%. This will be taken care of.
-- There are a lot of known issues that are quick to fix (like function lookups being O(n)).
 
-There's some old hacky code written when V was 2 months old. All of it will be quickly cleaned up. There are ~500 lines of C code, which will be removed by the end of June.
 
 ## Code structure
 
-https://github.com/vlang/v/blob/master/CodeStructure.md
+https://github.com/vlang/v/blob/master/CONTRIBUTING.md
 
 ## Installing V from source
 
-### Linux and macOS
+### Linux, macOS, Android, Raspberry Pi
 
 You'll need Clang or GCC. On macOS run `xcode-select --install` if you don't have XCode or XCode tools installed.
 
 ```bash
 # You can clone V anywhere
 git clone https://github.com/vlang/v
-cd v/compiler
+cd v
 make
 ```
 Or build without make:
 ```bash
 # Download the V compiler's source translated to C
-curl -sO https://raw.githubusercontent.com/vlang/vc/master/v.c
+curl -O https://raw.githubusercontent.com/vlang/vc/master/v.c
 cc -std=gnu11 -w -o v v.c  # Build it with Clang or GCC
-./v -o v .                 # Use the resulting V binary to build V from V source
-./v -o v .                 # Build the compiler again to make sure it works
+./v -o v compiler          # Use the resulting V binary to build V from V source
 ```
 
-That's it! Now you have a V executable at `v/compiler/v`.
+That's it! Now you have a V executable at `[path to V repo]/v`.
 
 You can create a symlink so that it's globally available:
 
 ```
-sudo ln -s [path to V repo]/compiler/v /usr/local/bin/v
+sudo ln -s [path to V repo]/v /usr/local/bin/v
 ```
 
 V is being constantly updated. To update V, simply run
 
 ```
 git pull origin master
-cd compiler/
-make clean
 make
 ```
 
@@ -88,9 +83,17 @@ make
 
 V works great on Windows Subsystem for Linux. The instructions are the same as above.
 
-If you want to build v.exe on Windows without WSL, you will need Visual Studio. Microsoft doesn't make it easy for developers.  Mingw-w64 could suffice, but if you plan to develop UI and graphical apps, VS is your only option.
+If you want to build v.exe on Windows without WSL, you have to install MinGW-w64 or Visual Studio ([github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows)) and then run
 
-V temporarily can't be compiled with Visual Studio. This will be fixed asap.
+
+```
+git clone https://github.com/vlang/v
+cd v
+make.bat
+```
+
+
+
 
 ### Testing
 
@@ -100,7 +103,7 @@ $ v run hello_world.v
 hello world
 
 $ v
-V 0.1.2
+V 0.1.x
 Use Ctrl-D to exit
 
 >>> println('hello world')

@@ -8,8 +8,8 @@ struct Table {
 mut:
 	types     []Type
 	consts    []Var
-	fns       []Fn
-	obf_ids   map_int // obf_ids 'myfunction'] == 23
+	fns       map[string]Fn 
+	obf_ids   map[string]int // obf_ids['myfunction'] == 23
 	packages  []string // List of all modules registered by the application
 	imports   []string // List of all imports
 	flags     []string //  ['-framework Cocoa', '-lglfw3']
@@ -25,11 +25,6 @@ enum AccessMod {
 	PUBLIC_MUT_MUT // public and mutable both inside and outside (not recommended to use, that's why it's so verbose)
 }
 
-enum TypeCategory {
-	TYPE_STRUCT
-	T_CAT_FN
-}
-
 struct Type {
 mut:
 	pkg            string
@@ -37,8 +32,6 @@ mut:
 	fields         []Var
 	methods        []Fn
 	parent         string
-	cat            TypeCategory
-	gen_types      []string
 	func           Fn // For cat == FN (type kek fn())
 	is_c           bool // C.FILE
 	is_interface   bool
@@ -112,6 +105,7 @@ fn is_float_type(typ string) bool {
 fn new_table(obfuscate bool) *Table {
 	mut t := &Table {
 		obf_ids: map[string]int{}
+		fns: map[string]Fn{}
 		obfuscate: obfuscate
 	}
 	t.register_type('int')
@@ -186,15 +180,8 @@ fn (p mut Parser) register_global(name, typ string) {
 	}
 }
 
-// TODO PERF O(N) this slows down the comiler a lot!
-fn (t mut Table) register_fn(f Fn) {
-	// Avoid duplicate fn names TODO why? the name should already be unique?
-	for ff in t.fns {
-		if ff.name == f.name {
-			return
-		}
-	}
-	t.fns << f
+fn (t mut Table) register_fn(new_fn Fn) {
+	t.fns[new_fn.name] = new_fn 
 }
 
 fn (table &Table) known_type(typ string) bool {
@@ -210,24 +197,17 @@ fn (table &Table) known_type(typ string) bool {
 	return false
 }
 
-// TODO PERF O(N) this slows down the compiler a lot!
 fn (t &Table) find_fn(name string) Fn {
-	for f in t.fns {
-		if f.name == name {
-			return f
-		}
-	}
+	f := t.fns[name] 
+	if !isnil(f.name.str) { 
+		return f 
+	} 
 	return Fn{}
 }
 
-// TODO PERF O(N) this slows down the compiler a lot! 
 fn (t &Table) known_fn(name string) bool {
-	for f in t.fns {
-		if f.name == name {
-			return true
-		}
-	}
-	return false
+	f := t.find_fn(name) 
+	return f.name != '' 
 }
 
 fn (t &Table) known_const(name string) bool {
@@ -240,7 +220,6 @@ fn (t mut Table) register_type(typ string) {
 	if typ.len == 0 {
 		return
 	}
-	// println('REGISTER TYPE $typ')
 	for typ2 in t.types {
 		if typ2.name == typ {
 			return
@@ -383,6 +362,7 @@ fn (t &Type) find_method(name string) Fn {
 	return Fn{}
 }
 
+/* 
 fn (t mut Type) add_gen_type(type_name string) {
 	// println('add_gen_type($s)')
 	if t.gen_types.contains(type_name) {
@@ -390,6 +370,7 @@ fn (t mut Type) add_gen_type(type_name string) {
 	}
 	t.gen_types << type_name
 }
+*/ 
 
 fn (p &Parser) find_type(name string) *Type {
 	typ := p.table.find_type(name)
@@ -414,7 +395,7 @@ fn (t &Table) find_type(name string) *Type {
 
 fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 	p.log('check types got="$got" exp="$expected"  ')
-	if p.translated {
+	if p.pref.translated {
 		return true
 	}
 	// Allow ints to be used as floats
@@ -443,7 +424,7 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 	// Todo void* allows everything right now
 	if got=='void*' || expected=='void*' {
 		// if !p.builtin_pkg {
-		if p.is_play {
+		if p.pref.is_play {
 			return false
 		}
 		return true
@@ -456,6 +437,9 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 	if got=='byteptr' && expected=='byte*' {
 		return true
 	}
+	if got=='byte*' && expected=='byteptr' {
+		return true
+	} 
 	if got=='int' && expected=='byte*' {
 		return true
 	}
@@ -475,7 +459,7 @@ fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
 		return true
 	}
 	// NsColor* return 0
-	if !p.is_play {
+	if !p.pref.is_play {
 		if expected.ends_with('*') && got == 'int' {
 			return true
 		}
@@ -553,6 +537,7 @@ fn type_default(typ string) string {
 	case 'byte*': return '0'
 	case 'bool': return '0'
 	}
+	return '{}' 
 	return ''
 }
 
@@ -568,7 +553,8 @@ fn (t &Table) is_interface(name string) bool {
 
 // Do we have fn main()?
 fn (t &Table) main_exists() bool {
-	for f in t.fns {
+	for entry in t.fns.entries { 
+		f := t.fns[entry.key] 
 		if f.name == 'main' {
 			return true
 		}

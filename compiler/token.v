@@ -119,7 +119,7 @@ fn build_keys() map_int {
 }
 
 fn build_token_str() []string {
-	mut s := [''; 140]// TODO define a const
+	mut s := [''; NrTokens]
 	s[keyword_beg] = ''
 	s[keyword_end] = ''
 	s[EOF] = 'EOF'
@@ -217,6 +217,7 @@ fn build_token_str() []string {
 }
 
 const (
+	NrTokens = 140
 	TOKENSTR = build_token_str()
 	KEYWORDS = build_keys()
 )
@@ -254,7 +255,7 @@ fn (t Token) is_assign() bool {
 	return t in AssignTokens
 }
 
-fn (t[]Token) contains(val Token) bool {
+fn (t []Token) contains(val Token) bool {
 	for tt in t {
 		if tt == val {
 			return true

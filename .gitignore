@@ -1,2 +1,5 @@
 *.dSYM
 *_test
+/v
+/vprod
+/v.c
