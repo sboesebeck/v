@@ -4,6 +4,9 @@
 
 module main
 
+import os
+import strings
+
 struct Scanner {
 mut:
 	file_path      string
@@ -314,8 +317,8 @@ fn (s mut Scanner) scan() ScanRes {
 	case `$`:
 		return scan_res(.dollar, '')
 	case `}`:
-		// s = `hello $name kek`
-		// s = `hello ${name} kek`
+		// s = `hello $name !`
+		// s = `hello ${name} !`
 		if s.inside_string {
 			s.pos++
 			// TODO UN.neEDED?
@@ -341,7 +344,7 @@ fn (s mut Scanner) scan() ScanRes {
 	case `|`:
 		if nextc == `|` {
 			s.pos++
-			return scan_res(.ortok, '')
+			return scan_res(.logical_or, '')
 		}
 		if nextc == `=` {
 			s.pos++

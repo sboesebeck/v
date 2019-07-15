@@ -239,6 +239,10 @@ pub fn (f File) writeln(s string) {
 	C.fputs('\n', f.cfile)
 }
 
+pub fn (f File) flush() {
+	C.fflush(f.cfile)
+}
+
 pub fn (f File) close() {
 	C.fclose(f.cfile)
 }
@@ -459,7 +463,14 @@ pub fn home_dir() string {
 	mut home := os.getenv('HOME')
 	$if windows {
 		home = os.getenv('HOMEDRIVE')
-		home += os.getenv('HOMEPATH')
+		if home.len == 0 {
+			home = os.getenv('SYSTEMDRIVE')
+		}
+		mut homepath := os.getenv('HOMEPATH')
+		if homepath.len == 0 {
+			homepath = '\\Users\\' + os.getenv('USERNAME')
+		}
+		home += homepath
 	}
 	home += '/'
 	return home
@@ -509,8 +520,11 @@ pub fn getexepath() string {
 	}
 
 	$if mac {
-		//panic('getexepath() not impl')
-		return ''
+		mut bufsize := MAX_PATH // if buffer is too small this will be updated with size needed
+		if C._NSGetExecutablePath(result, &bufsize) == -1 {
+			panic('Could not get executable path, buffer too small (need: $bufsize).')
+		}
+		return tos(result, strlen(result))
 	}
 }
 
@@ -615,7 +629,7 @@ pub fn ls(path string) []string {
 	} 
 	$else { 
 		mut res := []string
-		dir := C.opendir(path.str)
+		dir := C.opendir(path.cstr()) 
 		if isnil(dir) {
 			println('ls() couldnt open dir "$path"')
 			print_c_errno()
@@ -639,6 +653,20 @@ pub fn ls(path string) []string {
 
 pub fn signal(signum int, handler voidptr) {
 	C.signal(signum, handler)
+}
+
+pub fn fork() int {
+	$if !windows {
+		pid := C.fork()
+		return pid
+	}
+}
+
+pub fn wait() int {
+	$if !windows {
+		pid := C.wait(0)
+		return pid
+	}
 }
 
 pub fn file_last_mod_unix(path string) int {

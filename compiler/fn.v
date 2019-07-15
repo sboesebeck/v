@@ -13,6 +13,7 @@ const (
 struct Fn {
 	// addr int
 mut:
+	name          string
 	pkg           string
 	local_vars    []Var
 	var_idx       int
@@ -22,7 +23,6 @@ mut:
 	// idx           int
 	scope_level   int
 	typ           string // return type
-	name          string
 	is_c          bool
 	receiver_typ  string
 	is_public    bool
@@ -144,7 +144,7 @@ fn (p mut Parser) fn_decl() {
 		// Don't allow modifying types from a different module
 		if !p.first_run() && !p.builtin_pkg && T.mod != p.mod {
 			println('T.mod=$T.mod')
-			println('pkg=$p.mod')
+			println('p.mod=$p.mod')
 			p.error('cannot define new methods on non-local type `$receiver_typ`')
 		}
 		// (a *Foo) instead of (a mut Foo) is a common mistake
@@ -194,7 +194,7 @@ fn (p mut Parser) fn_decl() {
 			p.error('function names cannot contain uppercase letters, use snake_case instead')
 		}
 		if f.name.contains('__') {
-			p.error('function names cannot contain double underscores ("__"), use single underscores instead')
+			p.error('function names cannot contain double underscores, use single underscores instead')
 		}
 	}
 	// simple_name := f.name
@@ -244,11 +244,9 @@ fn (p mut Parser) fn_decl() {
 		typ = p.get_type()
 	}
 	// Translated C code can have empty functions (just definitions)
-	is_fn_header := !is_c && !is_sig && (p.pref.translated || p.pref.is_test) &&
-	(p.tok != .lcbr)// || (p.tok == .name && p.peek() != .lcbr))
+	is_fn_header := !is_c && !is_sig && (p.pref.translated || p.pref.is_test) &&	p.tok != .lcbr 
 	if is_fn_header {
 		f.is_decl = true
-		// println('.key_goT fn header $f.name')
 	}
 	// { required only in normal function declarations
 	if !is_c && !is_sig && !is_fn_header {
@@ -509,13 +507,6 @@ fn (p mut Parser) fn_call(f Fn, method_ph int, receiver_var, receiver_type strin
 		p.error('function `$f.name` is private')
 	}
 	p.calling_c = f.is_c
-	is_print := p.pref.is_prod &&// Hide prints only in prod
-	!p.pref.is_test &&
-	!p.builtin_pkg &&// Allow prints in builtin  pkgs
-	f.is_c && f.name == 'printf'
-	if !p.cgen.nogen {
-		p.cgen.nogen = is_print
-	}
 	cgen_name := p.table.cgen_name(f)
 	// if p.pref.is_prof {
 	// p.cur_fn.called_fns << cgen_name
@@ -533,7 +524,7 @@ fn (p mut Parser) fn_call(f Fn, method_ph int, receiver_var, receiver_type strin
 		receiver := f.args.first()
 		if receiver.is_mut && !p.expr_var.is_mut {
 			println('$method_call  recv=$receiver.name recv_mut=$receiver.is_mut')
-			p.error('`$p.expr_var.name` is imkey_mut')
+			p.error('`$p.expr_var.name` is immutable')
 		}
 		// if receiver is key_mut or a ref (&), generate & for the first arg
 		if receiver.ref || (receiver.is_mut && !receiver_type.contains('*')) {
@@ -557,9 +548,6 @@ fn (p mut Parser) fn_call(f Fn, method_ph int, receiver_var, receiver_type strin
 	p.fn_call_args(f)
 	p.gen(')')
 	p.calling_c = false
-	if is_print {
-		p.cgen.nogen = false
-	}
 	// println('end of fn call typ=$f.typ')
 }
 
@@ -678,8 +666,8 @@ fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 			str_args := f.str_args(p.table)// TODO this is C args
 			p.error('not enough arguments in call to `$f.name ($str_args)`')
 		}
-		// If `arg` is key_mut, the caller needs to provide `mut`: 
-		// `arr := [1,2,3]; reverse(mut arr);`
+		// If `arg` is mutable, the caller needs to provide `mut`: 
+		// `mut numbers := [1,2,3]; reverse(mut numbers);`
 		if arg.is_mut {
 			if p.tok != .key_mut {
 				p.error('`$arg.name` is a key_mut argument, you need to provide `mut`: `$f.name(...mut a...)`')
@@ -690,17 +678,13 @@ fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 			p.check(.key_mut)
 		}
 		p.expected_type = arg.typ 
-		//TT := p.table.find_type(arg.typ)  
-		//if arg.typ.parent == 'int' {
-			//p.expected_type =  
-//} 
 		typ := p.bool_expression()
 		// Optimize `println`: replace it with `printf` to avoid extra allocations and
 		// function calls. `println(777)` => `printf("%d\n", 777)` 
 		// (If we don't check for void, then V will compile `println(func())`) 
 		if i == 0 && f.name == 'println' && typ != 'string' && typ != 'void' {
 			T := p.table.find_type(typ)
-			fmt := p.typ_to_fmt(typ) 
+			fmt := p.typ_to_fmt(typ, 0) 
 			if fmt != '' { 
 				p.cgen.cur_line = p.cgen.cur_line.replace('println (', '/*opt*/printf ("' + fmt + '\\n", ')    
 				continue 
@@ -712,12 +696,13 @@ fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 			}
 			// Make sure this type has a `str()` method
 			if !T.has_method('str') {
+				error_msg := ('`$typ` needs to have method `str() string` to be printable')
 				if T.fields.len > 0 {
 					mut index := p.cgen.cur_line.len - 1
 					for index > 0 && p.cgen.cur_line[index] != ` ` { index-- }
 					name := p.cgen.cur_line.right(index + 1)
 					if name == '}' {
-						p.error('`$typ` needs to have method `str() string` to be printable')
+						p.error(error_msg) 
 					}
 					p.cgen.cur_line = p.cgen.cur_line.left(index)
 					p.create_type_string(T, name)
@@ -725,7 +710,7 @@ fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 					p.next()
 					return p.fn_call_args(f)
 				}
-				p.error('`$typ` needs to have method `str() string` to be printable')
+				p.error(error_msg) 
 			}
 			p.cgen.set_placeholder(ph, '${typ}_str(')
 			p.gen(')')

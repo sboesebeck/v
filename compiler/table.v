@@ -4,6 +4,8 @@
 
 module main
 
+import math 
+
 struct Table {
 mut:
 	types     []Type
@@ -15,6 +17,13 @@ mut:
 	flags     []string //  ['-framework Cocoa', '-lglfw3']
 	fn_cnt    int atomic
 	obfuscate bool
+}
+
+// Holds import information scoped to the parsed file
+struct FileImportTable {
+mut:
+	file_path string
+	imports   map[string]string
 }
 
 enum AccessMod {
@@ -32,7 +41,7 @@ mut:
 	fields         []Var
 	methods        []Fn
 	parent         string
-	func           Fn // For cat == FN (type kek fn())
+	func           Fn // For cat == FN (type myfn fn())
 	is_c           bool // C.FI.le
 	is_interface   bool
 	is_enum        bool
@@ -258,18 +267,17 @@ if parent == 'array' {
 pkg = 'builtin'
 }
 */
-	datyp := Type {
+	t.types << Type { 
 		name: typ
 		parent: parent
+		//mod: mod 
 	}
-	t.types << datyp
 }
 
 fn (t mut Table) register_type2(typ Type) {
 	if typ.name.len == 0 {
 		return
 	}
-	// println('register type2 $typ.name')
 	for typ2 in t.types {
 		if typ2.name == typ.name {
 			return
@@ -535,11 +543,21 @@ fn type_default(typ string) string {
 	}
 	// Default values for other types are not needed because of mandatory initialization
 	switch typ {
-	case 'int': return '0'
-	case 'string': return 'tos("", 0)'
-	case 'void*': return '0'
-	case 'byte*': return '0'
 	case 'bool': return '0'
+	case 'string': return 'tos("", 0)'
+	case 'i8': return '0'
+	case 'i16': return '0'
+	case 'i32': return '0'
+	case 'u8': return '0'
+	case 'u16': return '0'
+	case 'u32': return '0'
+	case 'byte': return '0'
+	case 'int': return '0'
+	case 'rune': return '0'
+	case 'f32': return '0.0'
+	case 'f64': return '0.0'
+	case 'byteptr': return '0'
+	case 'voidptr': return '0'
 	}
 	return '{}' 
 	return ''
@@ -557,8 +575,7 @@ fn (t &Table) is_interface(name string) bool {
 
 // Do we have fn main()?
 fn (t &Table) main_exists() bool {
-	for entry in t.fns.entries { 
-		f := t.fns[entry.key] 
+	for _, f in t.fns { 
 		if f.name == 'main' {
 			return true
 		}
@@ -638,3 +655,79 @@ fn (table &Table) cgen_name_type_pair(name, typ string) string {
 	return '$typ $name'
 }
 
+fn is_valid_int_const(val, typ string) bool {
+	x := val.int() 
+	switch typ {
+	case 'byte', 'u8': return 0 <= x && x <= math.MaxU8 
+	case 'u16': return 0 <= x && x <= math.MaxU16 
+	//case 'u32': return 0 <= x && x <= math.MaxU32 
+	//case 'u64': return 0 <= x && x <= math.MaxU64 
+	////////////// 
+	case 'i8': return math.MinI8 <= x && x <= math.MaxI8 
+	case 'i16': return math.MinI16 <= x && x <= math.MaxI16 
+	case 'int', 'i32': return math.MinI32 <= x && x <= math.MaxI32 
+	//case 'i64': 
+		//x64 := val.i64() 
+		//return i64(-(1<<63)) <= x64 && x64 <= i64((1<<63)-1) 
+	} 
+	return true 
+}
+
+// Once we have a module format we can read from module file instead
+// this is not optimal
+fn (table &Table) qualify_module(mod string, file_path string) string {
+	for m in table.imports {
+		if m.contains('.') && m.contains(mod) {
+			m_parts := m.split('.')
+			m_path := m_parts.join('/')
+			if mod == m_parts[m_parts.len-1] && file_path.contains(m_path) {
+				return m
+			}
+		}
+	}
+	return mod
+}
+
+fn new_file_import_table(file_path string) *FileImportTable {
+	mut t := &FileImportTable{
+		file_path: file_path
+		imports:   map[string]string{}
+	}
+	return t
+}
+
+fn (fit &FileImportTable) known_import(mod string) bool {
+	return fit.imports.exists(mod) || fit.is_aliased(mod)
+}
+
+fn (fit mut FileImportTable) register_import(mod string) {
+	fit.register_alias(mod, mod)
+}
+
+fn (fit mut FileImportTable) register_alias(alias string, mod string) {
+	if fit.imports.exists(alias) {
+		panic('cannot import $mod as $alias: import name $alias already in use in "${fit.file_path}".')
+		return 
+	} 
+	fit.imports[alias] = mod
+}
+
+fn (fit &FileImportTable) known_alias(alias string) bool {
+	return fit.imports.exists(alias)
+}
+
+fn (fit &FileImportTable) is_aliased(mod string) bool {
+	for _, val in fit.imports { 
+		if val == mod {
+			return true 
+		} 
+	}
+	return false
+}
+
+fn (fit &FileImportTable) resolve_alias(alias string) string {
+	if fit.imports.exists(alias) {
+		return fit.imports[alias]
+	}
+	return ''
+}

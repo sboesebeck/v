@@ -16,9 +16,9 @@ matrix:
             - libglfw3-dev
             - libfreetype6-dev 
             - libcurl3-dev
-    #- os: windows
-    #  language: sh
-    #  filter_secrets: false
+    - os: windows
+      language: sh
+      filter_secrets: false
     - os: osx
       osx_image: xcode10.2
       addons:
@@ -35,9 +35,16 @@ script:
     fi
   - |
     if [[ "${TRAVIS_OS_NAME}" == "windows" ]]; then
-      choco install make
+      #choco install make
       cp "C:\\ProgramData\\chocolatey\\bin\\gcc.exe" "C:\\ProgramData\\chocolatey\\bin\\cc.exe"
     fi
   - export VROOT=$(pwd)
-  - make
-  - make test
+  - |
+    if [[ "${TRAVIS_OS_NAME}" == "windows" ]]; then
+      ./make.bat
+    fi
+  - |
+    if [[ "${TRAVIS_OS_NAME}" != "windows" ]]; then
+      make
+      make test
+    fi

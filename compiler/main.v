@@ -6,21 +6,22 @@ module main
 
 import os
 import time
+import strings
 
 const (
-	Version = '0.1.13' 
+	Version = '0.1.14' 
 )
 
 enum BuildMode {
 	// `v program.v'
 	// Build user code only, and add pre-compiled vlib (`cc program.o builtin.o os.o...`)
-    default_mode
+	default_mode
 	// `v -embed_vlib program.v`
 	// vlib + user code in one file (slower compilation, but easier when working on vlib and cross-compiling)
-    embed_vlib
+	embed_vlib
 	// `v -lib ~/v/os`
 	// build any module (generate os.o + os.vh)
-    build //TODO a better name would be smth like `.build_module` I think
+	build //TODO a better name would be smth like `.build_module` I think
 }
 
 fn vtmp_path() string {
@@ -39,7 +40,7 @@ enum OS {
 }
 
 enum Pass {
-	// A very short pass that only looks at imports in the begginning of each file
+	// A very short pass that only looks at imports in the beginning of each file
 	imports
 	// First pass, only parses and saves declarations (fn signatures, consts, types).
 	// Skips function bodies.
@@ -48,11 +49,6 @@ enum Pass {
 	// Second pass, parses function bodies and generates C or machine code.
 	main
 }
-
-fn mykek(o OS) {
-
- 
-} 
 
 struct V {
 mut:
@@ -252,7 +248,7 @@ void init_consts();')
 	// Embed cjson either in embedvlib or in json.o
 	if imports_json && v.pref.build_mode == .embed_vlib ||
 	(v.pref.build_mode == .build && v.out_name.contains('json.o')) {
-		cgen.genln('#include "cJSON.c" ')
+		//cgen.genln('#include "cJSON.c" ')
 	}
 	// We need the cjson header for all the json decoding user will do in default mode
 	if v.pref.build_mode == .default_mode {
@@ -350,7 +346,7 @@ string _STR_TMP(const char *fmt, ...) {
 			// It can be skipped in single file programs
 			if v.pref.is_script {
 				//println('Generating main()...')
-				cgen.genln('int main() { $cgen.fn_main; return 0; }')
+				cgen.genln('int main() { init_consts(); $cgen.fn_main; return 0; }')
 			}
 			else {
 				println('panic: function `main` is undeclared in the main module')
@@ -360,8 +356,7 @@ string _STR_TMP(const char *fmt, ...) {
 		// Generate `main` which calls every single test function
 		else if v.pref.is_test {
 			cgen.genln('int main() { init_consts();')
-			for entry in v.table.fns.entries { 
-				f := v.table.fns[entry.key] 
+			for key, f in v.table.fns { 
 				if f.name.starts_with('test_') {
 					cgen.genln('$f.name();')
 				}
@@ -527,7 +522,7 @@ fn (v mut V) cc() {
 	} 
 	linux_host := os.user_os() == 'linux'
 	v.log('cc() isprod=$v.pref.is_prod outname=$v.out_name')
-	mut a := ['-w', '-march=native']// arguments for the C compiler
+	mut a := ['-w'] // arguments for the C compiler
 	flags := v.table.flags.join(' ')
 	//mut shared := ''
 	if v.pref.is_so {
@@ -602,7 +597,7 @@ mut args := ''
 		a << '-x objective-c'
 	}
 	// Without these libs compilation will fail on Linux
-	if v.os == .linux && v.pref.build_mode != .build {
+	if (v.os == .linux || os.user_os() == 'linux') && v.pref.build_mode != .build {
 		a << '-lm -ldl -lpthread'
 	}
 	// Find clang executable
@@ -684,7 +679,7 @@ fn (v &V) v_files_from_dir(dir string) []string {
 		if file.ends_with('_mac.v') && v.os != .mac { 
 			lin_file := file.replace('_mac.v', '_lin.v')
 			// println('lin_file="$lin_file"')
-			// If there are both _mav.v and _lin.v, don't use _mav.v
+			// If there are both _mac.v and _lin.v, don't use _mav.v
 			if os.file_exists('$dir/$lin_file') {
 				continue
 			}
@@ -947,7 +942,7 @@ fn new_v(args[]string) *V {
 			exit(1) 
 		}
 	} 
-	out_name_c := out_name.all_after('/') + '.c'
+	mut out_name_c := out_name.all_after('/') + '.c'
 	mut files := []string
 	// Add builtin files
 	if !out_name.contains('builtin.o') {
@@ -979,7 +974,12 @@ fn new_v(args[]string) *V {
 		is_run: args.contains('run')
 		is_repl: args.contains('-repl')
 		build_mode: build_mode
+	}  
+
+	if pref.is_so {
+		out_name_c = out_name.all_after('/') + '_shared_lib.c'
 	}
+
 	return &V {
 		os: _os
 		out_name: out_name
@@ -1039,7 +1039,7 @@ fn run_repl() []string {
 			mut temp_line := line
 			mut temp_flag := false
 			if !(line.contains(' ') || line.contains(':') || line.contains('=') || line.contains(',') ){
-				temp_line = 'println('+line+')'
+				temp_line = 'println($line)'
 				temp_flag = true
 			}
 			temp_source_code := lines.join('\n') + '\n' + temp_line
@@ -1068,20 +1068,19 @@ fn run_repl() []string {
 	return lines
 }
 
-// This definitely needs to be better :)
 const (
 	HelpText = '
 Usage: v [options] [file | directory]
 
 Options:
   -                 Read from stdin (Default; Interactive mode if in a tty)
-  -h, --help, help  Display this information.
+  -h, help          Display this information.
   -v, version       Display compiler version.
+  -lib              Generate object file.
   -prod             Build an optimized executable.
   -o <file>         Place output into <file>.
   -obf              Obfuscate the resulting binary.
-  run               Build and execute a V program.
-                    You can add arguments after file name.
+  run               Build and execute a V program. You can add arguments after file name.
 
 Files:
   <file>_test.v     Test file.
