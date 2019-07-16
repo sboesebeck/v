@@ -75,6 +75,7 @@ enum Token {
 	key_const
 	key_continue
 	key_default 
+	key_defer 
 	key_else
 	key_embed
 	key_enum
@@ -97,7 +98,7 @@ enum Token {
 	key_struct
 	key_switch 
 	key_true
-	typ
+	key_type 
 	//typeof 
 	key_orelse
 	key_union
@@ -188,7 +189,7 @@ fn build_token_str() []string {
 	s[Token.key_goto] = 'goto'
 	s[Token.key_const] = 'const'
 	s[Token.key_mut] = 'mut'
-	s[Token.typ] = 'type'
+	s[Token.key_type] = 'type'
 	s[Token.key_for] = 'for'
 	s[Token.key_switch] = 'switch'
 	//Tokens[MATCH] = 'match'
@@ -213,6 +214,7 @@ fn build_token_str() []string {
 	s[Token.key_union] = 'union'
 	s[Token.key_static] = 'static'
 	s[Token.key_as] = 'as'
+	s[Token.key_defer] = 'defer'
 	return s
 }
 
@@ -240,7 +242,7 @@ fn (t Token) is_decl() bool {
 	//return t in [.key_enum, .key_interface, .func, .typ, .key_const,  
 		//.key_import_const, .key_struct, .key_pub, .eof]
 	return t == .key_enum || t == .key_interface || t == .func || 
-	t == .key_struct || t == .typ ||
+	t == .key_struct || t == .key_type ||
 	t == .key_const || t == .key_import_const || t == .key_pub || t == .eof
 }
 

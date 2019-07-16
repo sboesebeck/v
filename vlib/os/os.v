@@ -320,8 +320,9 @@ pub fn file_exists(path string) bool {
 
 pub fn dir_exists(path string) bool {
 	$if windows {
-		attr := int(C.GetFileAttributes(path.cstr())) 
-		return attr == FILE_ATTRIBUTE_DIRECTORY 
+		return file_exists(path) 
+		//attr := int(C.GetFileAttributes(path.cstr())) 
+		//return attr & FILE_ATTRIBUTE_DIRECTORY 
 	} 
 	$else { 
 		dir := C.opendir(path.cstr())
@@ -381,6 +382,24 @@ pub fn ext(path string) string {
 	}
 	return path.right(pos)
 }
+
+
+// dir returns all but the last element of path, typically the path's directory.  
+pub fn dir(path string) string {
+	mut pos := -1
+	// TODO PathSeparator defined in os_win.v doesn't work when building V, 
+	// because v.c is generated for a nix system. 
+	$if windows { 
+		pos = path.last_index('\\') 
+	} 
+	$else { 
+		pos = path.last_index(PathSeparator) 
+	} 
+	if pos == -1 {
+		return '.' 
+	} 
+	return path.left(pos) 
+} 
 
 fn path_sans_ext(path string) string {
 	pos := path.last_index('.')
@@ -455,6 +474,9 @@ pub fn user_os() string {
 	$if windows {
 		return 'windows'
 	}
+	$if freebsd {
+		return 'freebsd' 
+	} 
 	return 'unknown'
 }
 
@@ -504,8 +526,8 @@ fn on_segfault(f voidptr) {
 	}
 }
 
-pub fn getexepath() string {
-	mut result := [4096]byte // [MAX_PATH]byte --> error byte undefined
+pub fn executable() string {
+	mut result := malloc(MAX_PATH) 
 	$if linux {
 		count := int(C.readlink('/proc/self/exe', result, MAX_PATH ))
 		if(count < 0) {
@@ -520,11 +542,22 @@ pub fn getexepath() string {
 	}
 
 	$if mac {
+		buf := malloc(MAX_PATH) 
+		pid := C.getpid() 
+		ret := C.proc_pidpath (pid, buf, MAX_PATH) 
+		if ret <= 0  {
+		println('executable() failed') 
+		return '' 
+		}  
+		return string(buf) 
+/* 
+// This doesn't work with symlinks 
 		mut bufsize := MAX_PATH // if buffer is too small this will be updated with size needed
 		if C._NSGetExecutablePath(result, &bufsize) == -1 {
 			panic('Could not get executable path, buffer too small (need: $bufsize).')
 		}
-		return tos(result, strlen(result))
+		return string(result) 
+*/ 
 	}
 }
 

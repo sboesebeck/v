@@ -9,7 +9,7 @@ import time
 import strings
 
 const (
-	Version = '0.1.14' 
+	Version = '0.1.15'  
 )
 
 enum BuildMode {
@@ -29,7 +29,7 @@ fn vtmp_path() string {
 }
 
 const (
-	SupportedPlatforms = ['windows', 'mac', 'linux']
+	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd', 'netbsd', 'dragonfly'] 
 	TmpPath            = vtmp_path()
 )
 
@@ -37,6 +37,10 @@ enum OS {
 	mac
 	linux
 	windows
+	freebsd 
+	openbsd 
+	netbsd 
+	dragonfly 
 }
 
 enum Pass {
@@ -389,7 +393,7 @@ int load_so(byteptr path) {
 		cgen.genln('return 1; }
  
 void reload_so() {
-	int last = 0; 
+	int last = os__file_last_mod_unix(tos2("$file"));
 	while (1) {
 		// TODO use inotify 
 		int now = os__file_last_mod_unix(tos2("$file")); 
@@ -399,7 +403,7 @@ void reload_so() {
 			last = now; 
 			load_so("$so_name"); 
 		}
-		time__sleep_ms(500); 
+		time__sleep_ms(400); 
 	}
 }
 ' ) 
@@ -535,6 +539,15 @@ fn (v mut V) cc() {
 	else {
 		a << '-g'
 	}
+	if v.pref.is_live || v.pref.is_so {
+		// See 'man dlopen', and test running a GUI program compiled with -live
+		if (v.os == .linux || os.user_os() == 'linux'){    
+			a << '-rdynamic'
+		}
+		if (v.os == .mac || os.user_os() == 'mac'){
+			a << '-flat_namespace'
+		}
+	}
 	mut libs := ''// builtin.o os.o http.o etc
 	if v.pref.build_mode == .build {
 		a << '-c'
@@ -584,7 +597,8 @@ mut args := ''
 	// else {
 	a << '-o $v.out_name'
 	// The C file we are compiling
-	a << '"$TmpPath/$v.out_name_c"'
+	//a << '"$TmpPath/$v.out_name_c"'
+	a << '".$v.out_name_c"'
 	// }
 	// Min macos version is mandatory I think?
 	if v.os == .mac {
@@ -597,8 +611,13 @@ mut args := ''
 		a << '-x objective-c'
 	}
 	// Without these libs compilation will fail on Linux
-	if (v.os == .linux || os.user_os() == 'linux') && v.pref.build_mode != .build {
-		a << '-lm -ldl -lpthread'
+	// || os.user_os() == 'linux' 
+	if v.pref.build_mode != .build && (v.os == .linux || v.os == .freebsd || v.os == .openbsd ||
+		v.os == .netbsd || v.os == .dragonfly) { 
+		a << '-lm -lpthread ' 
+		if v.os == .linux {
+			a << ' -ldl ' 
+		} 
 	}
 	// Find clang executable
 	//fast_clang := '/usr/local/Cellar/llvm/8.0.0/bin/clang'
@@ -644,7 +663,7 @@ mut args := ''
 		println('linux cross compilation done. resulting binary: "$v.out_name"')
 	}
 	if !v.pref.is_debug && v.out_name_c != 'v.c' && v.out_name_c != 'v_macos.c' {
-		//os.rm('$TmpPath/$v.out_name_c') 
+		os.rm('.$v.out_name_c') 
 	} 
 }
 
@@ -659,11 +678,8 @@ fn (v &V) v_files_from_dir(dir string) []string {
 	if v.pref.is_verbose {
 		println('v_files_from_dir ("$dir")')
 	}
-	// println(files.len)
-	// println(files)
 	files.sort()
 	for file in files {
-		v.log('F=$file')
 		if !file.ends_with('.v') && !file.ends_with('.vh') {
 			continue
 		}
@@ -677,19 +693,11 @@ fn (v &V) v_files_from_dir(dir string) []string {
 			continue
 		}
 		if file.ends_with('_mac.v') && v.os != .mac { 
-			lin_file := file.replace('_mac.v', '_lin.v')
-			// println('lin_file="$lin_file"')
-			// If there are both _mac.v and _lin.v, don't use _mav.v
-			if os.file_exists('$dir/$lin_file') {
-				continue
-			}
-			else if v.os == .windows {
-				continue
-			}
-			else {
-				// If there's only _mav.v, then it can be used on Linux too
-			}
-		}
+			continue
+		} 
+		if file.ends_with('_nix.v') && v.os == .windows {
+			continue 
+		} 
 		res << '$dir/$file'
 	}
 	return res
@@ -892,12 +900,28 @@ fn new_v(args[]string) *V {
 		$if windows {
 			_os = .windows
 		}
+		$if freebsd {
+			_os = .freebsd 
+		}
+		$if openbsd {
+			_os = .openbsd 
+		}
+		$if netbsd {
+			_os = .netbsd 
+		}
+		$if dragonfly {
+			_os = .dragonfly 
+		}
 	}
 	else {
 		switch target_os {
 		case 'linux': _os = .linux
 		case 'windows': _os = .windows
 		case 'mac': _os = .mac
+		case 'freebsd': _os = .freebsd 
+		case 'openbsd': _os = .openbsd 
+		case 'netbsd': _os = .netbsd 
+		case 'dragonfly': _os = .dragonfly 
 		}
 	}
 	builtins := [
@@ -910,44 +934,22 @@ fn new_v(args[]string) *V {
 	'option.v',
 	]
 	// Location of all vlib files
-	mut lang_dir := ''
-	// First try fetching it from VROOT if it's defined
-	for { // TODO tmp hack for optionals
-	vroot_path := TmpPath + '/VROOT'
-	if os.file_exists(vroot_path) {
-		mut vroot := os.read_file(vroot_path) or {
-			break
-		} 
-		//mut vroot := os.read_file(vroot_path) 
-		vroot=vroot.trim_space() 
-		if os.dir_exists(vroot) && os.dir_exists(vroot + '/vlib/builtin') {
-			lang_dir = vroot
-		}
-	}
-	break
-	}
-	// no "~/.vlang/VROOT" file, so the user must be running V for the first 
-	// time.
-	if lang_dir == ''  {
-		println('Looks like you are running V for the first time.')
-		// The parent directory should contain vlib if V is run
-		// from "v/compiler"
-		lang_dir = os.getwd() 
-		if os.dir_exists('$lang_dir/vlib/builtin') {
-			println('Setting VROOT to "$lang_dir".')
-			os.write_file(TmpPath + '/VROOT', lang_dir)
-		} else {
-			println('V repo not found. Go to https://vlang.io to download V.zip ')  
-			println('or install V from source.') 
-			exit(1) 
-		}
+	vroot := os.dir(os.executable()) 
+	println('VROOT=$vroot') 
+	// v.exe's parent directory should contain vlib 
+	if os.dir_exists(vroot) && os.dir_exists(vroot + '/vlib/builtin') {
+ 
+	}  else {
+		println('vlib not found. It should be next to V executable. ') 
+		println('Go to https://vlang.io to install V.') 
+		exit(1) 
 	} 
 	mut out_name_c := out_name.all_after('/') + '.c'
 	mut files := []string
 	// Add builtin files
 	if !out_name.contains('builtin.o') {
 		for builtin in builtins {
-			mut f := '$lang_dir/vlib/builtin/$builtin'
+			mut f := '$vroot/vlib/builtin/$builtin'
 			// In default mode we use precompiled vlib.o, point to .vh files with signatures
 			if build_mode == .default_mode || build_mode == .build {
 				//f = '$TmpPath/vlib/builtin/${builtin}h'
@@ -985,12 +987,12 @@ fn new_v(args[]string) *V {
 		out_name: out_name
 		files: files
 		dir: dir
-		lang_dir: lang_dir
+		lang_dir: vroot 
 		table: new_table(obfuscate)
 		out_name: out_name
 		out_name_c: out_name_c
 		cgen: new_cgen(out_name_c)
-		vroot: lang_dir
+		vroot: vroot 
 		pref: pref
 	}
 }

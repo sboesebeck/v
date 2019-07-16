@@ -189,7 +189,7 @@ fn (p mut Parser) parse() {
 			}
 		case Token.func:
 			p.fn_decl()
-		case Token.typ:
+		case Token.key_type:
 			p.type_decl()
 		case Token.lsbr:
 			// `[` can only mean an [attribute] before a function
@@ -401,7 +401,7 @@ fn (p mut Parser) const_decl() {
 // `type myint int`
 // `type onclickfn fn(voidptr) int`
 fn (p mut Parser) type_decl() {
-	p.check(.typ)
+	p.check(.key_type)
 	name := p.check_name()
 	parent := p.get_type()
 	nt_pair := p.table.cgen_name_type_pair(name, parent)
@@ -642,7 +642,12 @@ fn (p mut Parser) enum_decl(_enum_name string) {
 
 // check_name checks for a name token and returns its literal
 fn (p mut Parser) check_name() string {
+	if p.tok == .key_type {
+		p.check(.key_type) 
+		return 'type' 
+	} 
 	name := p.lit
+	 
 	p.check(.name)
 	return name
 }
@@ -1022,6 +1027,9 @@ fn (p mut Parser) statement(add_semi bool) string {
 		label := p.check_name()
 		p.genln('goto $label;')
 		return ''
+	case Token.key_defer:
+		p.defer_st()
+		return ''
 	case Token.hash:
 		p.chash()
 		return ''
@@ -1038,7 +1046,7 @@ fn (p mut Parser) statement(add_semi bool) string {
 	case Token.key_return:
 		p.return_st()
 	case Token.lcbr:// {} block
-		p.next()
+		p.check(.lcbr) 
 		p.genln('{')
 		p.statements()
 		return ''
@@ -1148,6 +1156,9 @@ fn (p mut Parser) var_decl() {
 	if !p.builtin_pkg && p.cur_fn.known_var(name) {
 		v := p.cur_fn.find_var(name)
 		p.error('redefinition of `$name`')
+	}
+	if name.len > 1 && contains_capital(name) {
+		p.error('variable names cannot contain uppercase letters, use snake_case instead')
 	}
 	p.check_space(.decl_assign) // := 
 	// Generate expression to tmp because we need its type first
@@ -1563,9 +1574,8 @@ fn (p mut Parser) dot(str_typ string, method_ph int) string {
 	has_field := p.table.type_has_field(typ, field_name)
 	has_method := p.table.type_has_method(typ, field_name)
 	if !typ.is_c && !has_field && !has_method && !p.first_run() {
-		// println(typ.str())
 		if typ.name.starts_with('Option_') {
-			opt_type := typ.name.substr(7, typ.name.len)
+			opt_type := typ.name.right(7) 
 			p.error('unhandled option type: $opt_type?')
 		}
 		println('error in dot():')
@@ -2222,6 +2232,7 @@ fn (p mut Parser) string_expr() {
 	mut format := '"'
 	for p.tok == .strtoken {
 		// Add the string between %d's
+		p.lit = p.lit.replace('%', '%%')
 		format += format_str(p.lit)
 		p.next()// skip $
 		if p.tok != .dollar {
@@ -2615,6 +2626,10 @@ fn os_name_to_ifdef(name string) string {
 		case 'windows': return '_WIN32'
 		case 'mac': return '__APPLE__'
 		case 'linux': return '__linux__' 
+		case 'freebsd': return '__FreeBSD__' 
+		case 'openbsd': return '__OpenBSD__' 
+		case 'netbsd': return '__NetBSD__' 
+		case 'dragonfly': return '__DragonFly__' 
 	} 
 	panic('bad os ifdef name "$name"') 
 	return '' 
@@ -3083,13 +3098,9 @@ else {
 }
 
 fn (p mut Parser) return_st() {
-	p.cgen.insert_before(p.cur_fn.defer)
-	p.gen('return ')
-	if p.cur_fn.name == 'main' {
-		p.gen(' 0')
-	}
+	p.cgen.insert_before(p.cur_fn.defer_text)
 	p.check(.key_return)
-	p.fgen(' ')
+
 	fn_returns := p.cur_fn.typ != 'void'
 	if fn_returns {
 		if p.tok == .rcbr {
@@ -3100,18 +3111,30 @@ fn (p mut Parser) return_st() {
 			expr_type := p.bool_expression()
 			// Automatically wrap an object inside an option if the function returns an option
 			if p.cur_fn.typ.ends_with(expr_type) && p.cur_fn.typ.starts_with('Option_') {
-				//p.cgen.set_placeholder(ph, 'opt_ok(& ')
-				p.cgen.set_placeholder(ph, 'opt_ok(& ')
-				p.gen(', sizeof($expr_type))')
+				tmp := p.get_tmp()
+				ret := p.cgen.cur_line.right(ph)
+
+				p.cgen.cur_line = '$expr_type $tmp = ($expr_type)($ret);'
+				p.gen('return opt_ok(&$tmp, sizeof($expr_type))')
+			}
+			else {
+				ret := p.cgen.cur_line.right(ph)
+				p.cgen.cur_line = 'return $ret'
 			}
 			p.check_types(expr_type, p.cur_fn.typ)
 		}
 	}
 	else {
 		// Don't allow `return val` in functions that don't return anything
-		// if p.tok != .rcbr && p.tok != .hash {
 		if false && p.tok == .name || p.tok == .integer {
 			p.error('function `$p.cur_fn.name` does not return a value')
+		}
+
+		if p.cur_fn.name == 'main' {
+			p.gen('return 0')
+		}
+		else {
+			p.gen('return')
 		}
 	}
 	p.returns = true
@@ -3251,6 +3274,19 @@ fn (p mut Parser) attribute() {
 	} 
 	p.error('bad attribute usage') 
 } 
+
+fn (p mut Parser) defer_st() {
+	p.check(.key_defer)
+	// Wrap everything inside the defer block in /**/ comments, and save it in 
+	// `defer_text`. It will be inserted before every `return`. 
+	p.genln('/*') 
+	pos := p.cgen.lines.len 
+	p.check(.lcbr) 
+	p.genln('{') 
+	p.statements() 
+	p.cur_fn.defer_text = p.cgen.lines.right(pos).join('\n') 
+	p.genln('*/') 
+}  
 
 
 ///////////////////////////////////////////////////////////////////////////////

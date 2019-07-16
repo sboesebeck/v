@@ -1,5 +1,5 @@
 // Build this example with
-// v -live -sanitize bounce.v
+// v -live bounce.v
 module main
 
 import gx
@@ -27,17 +27,18 @@ fn main() {
 	height := 300
 	mut game := &Game{
 		vg: 0 
-		dx: 3 
-		dy: 3 
+		dx: 2 
+		dy: 2 
 		height: height 
 		width: width 
 	}
 	mut window := glfw.create_window(glfw.WinCfg {
-		width: width,
-		height: height,
-		borderless: false,
+		width: width 
+		height: height 
+		borderless: false 
 		title: 'Hot code reloading demo'
 		ptr: game 
+		always_on_top: true 
 	}) 
 	//window.onkeydown(key_down)
 	game.main_wnd = window 
@@ -66,7 +67,7 @@ const (
 
 [live]
 fn (ctx &Game) draw() {
-	ctx.vg.draw_rect(ctx.x, ctx.y, W, W, gx.rgb(0, 0, 255))
+	ctx.vg.draw_rect(ctx.x, ctx.y, W, W, gx.rgb(255, 0, 0)) 
 }
 
 fn (ctx mut Game) run() {
@@ -80,7 +81,7 @@ fn (ctx mut Game) run() {
 			ctx.dx = - ctx.dx
 		}
 		// Refresh
-		time.sleep_ms(30)
+		time.sleep_ms(17)
 		glfw.post_empty_event()
 	}
 }
