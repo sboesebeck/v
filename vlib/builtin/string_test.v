@@ -299,3 +299,33 @@ fn test_reverse() {
 	t := ''
 	assert t.reverse() == t
 }
+
+
+struct Foo {
+	bar int 
+} 
+
+fn (f Foo) baz() string {
+	return 'baz' 
+} 
+
+fn test_interpolation() {
+	num := 7 
+	mut s := 'number=$num' 
+	assert s == 'number=7' 
+	foo := Foo{} 
+	s = 'baz=${foo.baz()}' 
+	assert s == 'baz=baz' 
+ 
+} 
+
+fn test_bytes_to_string() {
+	mut buf := malloc(10) 
+	buf[0] = `h` 
+	buf[1] = `e` 
+	buf[2] = `l` 
+	buf[3] = `l` 
+	buf[4] = `o` 
+	assert string(buf) == 'hello' 
+	assert string(buf, 2) == 'he' 
+} 

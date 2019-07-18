@@ -1,5 +1,8 @@
 module os
 
+#flag -lws2_32
+#include <winsock2.h>
+
 const (
 	PathSeparator = '\\' 
 ) 
@@ -59,8 +62,17 @@ const (
     LANG_NEUTRAL    = (SUBLANG_NEUTRAL)
 )   
 
+// Ref - https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes--12000-15999-
+const (
+    MAX_ERROR_CODE  = 15841 // ERROR_API_UNAVAILABLE
+)
+
 fn ptr_get_error_message(code u32) voidptr {
     mut buf := voidptr(0)
+    // Check for code overflow
+    if code > u32(MAX_ERROR_CODE) {
+        return buf
+    }
     C.FormatMessage(
 		FORMAT_MESSAGE_ALLOCATE_BUFFER
 		| FORMAT_MESSAGE_FROM_SYSTEM
@@ -71,5 +83,8 @@ fn ptr_get_error_message(code u32) voidptr {
 
 pub fn get_error_msg(code u32) string {
 	_ptrdata := ptr_get_error_message(code)
+    if _ptrdata == voidptr(0) {
+        return ''
+    }
 	return tos(_ptrdata, C.strlen(_ptrdata))
 }

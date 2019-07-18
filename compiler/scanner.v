@@ -19,15 +19,15 @@ mut:
 	debug          bool
 	line_comment   string
 	started        bool
-	is_fmt         bool
 	// vfmt fields
 	fmt_out        strings.Builder
 	fmt_indent     int
 	fmt_line_empty bool
+	prev_tok Token 
 }
 
 const (
-	SINGLE_QUOTE = `\'`
+	SingleQuote = `\'`
 	//QUOTE        = `"`
 )
 
@@ -36,15 +36,30 @@ fn new_scanner(file_path string) *Scanner {
 		panic('"$file_path" doesn\'t exist')
 	}
 	//text := os.read_file(file_path) 
-	text := os.read_file(file_path) or {
+	mut raw_text := os.read_file(file_path) or {
 		panic('scanner: failed to open "$file_path"')
 		return &Scanner{}
 	}
+
+	// BOM check
+	if raw_text.len >= 3 {
+		c_text := raw_text.cstr()
+
+		if c_text[0] == 0xEF && c_text[1] == 0xBB && c_text[2] == 0xBF {
+			// skip three BOM bytes
+			offset_from_begin := 3
+			raw_text = tos(c_text[offset_from_begin], C.strlen(c_text) - offset_from_begin)
+		}
+	}
+
+	text := raw_text
+
 	scanner := &Scanner {
 		file_path: file_path
 		text: text
 		fmt_out: strings.new_builder(1000)
 	}
+
 	// println('new scanner "$file_path" txt.len=$scanner.text.len')
 	return scanner
 }
@@ -144,9 +159,6 @@ fn (s mut Scanner) skip_whitespace() {
 			if !(s.text[s.pos] == `\n` && s.pos > 0 && s.text[s.pos-1] == `\r`) { 
 				s.line_nr++
 			} 
-			if s.is_fmt {
-				return
-			}
 		}
 		s.pos++
 	}
@@ -164,11 +176,17 @@ fn (s mut Scanner) get_var_name(pos int) string {
 }
 
 // CAO stands for Compound Assignment Operators  (e.g '+=' )
+/* 
 fn (s mut Scanner) cao_change(operator string) {
 	s.text = s.text.substr(0, s.pos - operator.len) + ' = ' + s.get_var_name(s.pos - operator.len) + ' ' + operator + ' ' + s.text.substr(s.pos + 1, s.text.len)
 }
+*/ 
 
 fn (s mut Scanner) scan() ScanRes {
+if s.line_comment != '' { 
+	//s.fgenln('// LOL "$s.line_comment"')
+	//s.line_comment = '' 
+} 
 	// if s.file_path == 'd.v' {
 	// println('\nscan()')
 	// }
@@ -184,19 +202,15 @@ fn (s mut Scanner) scan() ScanRes {
 	if !s.inside_string {
 		s.skip_whitespace()
 	}
-	if s.is_fmt && s.text[s.pos] == `\n` {
-		return scan_res(.nl, '')
-	}
 	// End of $var, start next string
-	if !s.is_fmt && s.dollar_end {
+	if s.dollar_end {
 		// fmt.Println("end of $var, get string", s.pos, string(s.text[s.pos]))
-		if s.text[s.pos] == SINGLE_QUOTE {
-			// fmt.Println("ENDDD")
+		if s.text[s.pos] == SingleQuote {
 			s.dollar_end = false
-			return scan_res(.strtoken, '')
+			return scan_res(.str, '')
 		}
 		s.dollar_end = false
-		return scan_res(.strtoken, s.ident_string())
+		return scan_res(.str, s.ident_string())
 	}
 	s.skip_whitespace()
 	// end of file
@@ -227,15 +241,15 @@ fn (s mut Scanner) scan() ScanRes {
 		// at the next ', skip it
 		if s.inside_string {
 			// println('is_letter inside string! nextc=${nextc.str()}')
-			if next_char == SINGLE_QUOTE {
+			if next_char == SingleQuote {
 				// println('var is last before QUOTE')
 				s.pos++
 				s.dollar_start = false
 				s.inside_string = false
 			}
 		}
-		if s.dollar_start && next_char != `.` {
-			// println('INSIDE .strtoken .dollar var=$name')
+		if s.dollar_start && next_char != `.` {//&& next_char != `(` {
+			// println('INSIDE .str .dollar var=$name')
 			s.dollar_end = true
 			s.dollar_start = false
 		}
@@ -246,7 +260,7 @@ fn (s mut Scanner) scan() ScanRes {
 		}
 		return scan_res(.name, name)
 	}
-	// number, `.123`
+	// `123`, `.123`
 	else if c.is_digit() || c == `.` && nextc.is_digit() {
 		num := s.ident_number()
 		return scan_res(.integer, num)
@@ -293,11 +307,11 @@ fn (s mut Scanner) scan() ScanRes {
 		return scan_res(.mod, '')
 	case `?`:
 		return scan_res(.question, '')
-	case SINGLE_QUOTE:
-		return scan_res(.strtoken, s.ident_string())
+	case SingleQuote:
+		return scan_res(.str, s.ident_string())
 		// TODO allow double quotes
 		// case QUOTE:
-		// return scan_res(.strtoken, s.ident_string())
+		// return scan_res(.str, s.ident_string())
 	case `\``:
 		return scan_res(.chartoken, s.ident_char())
 	case `(`:
@@ -322,11 +336,11 @@ fn (s mut Scanner) scan() ScanRes {
 		if s.inside_string {
 			s.pos++
 			// TODO UN.neEDED?
-			if s.text[s.pos] == SINGLE_QUOTE {
+			if s.text[s.pos] == SingleQuote {
 				s.inside_string = false
-				return scan_res(.strtoken, '')
+				return scan_res(.str, '')
 			}
-			return scan_res(.strtoken, s.ident_string())
+			return scan_res(.str, s.ident_string())
 		}
 		else {
 			return scan_res(.rcbr, '')
@@ -373,10 +387,6 @@ fn (s mut Scanner) scan() ScanRes {
 		}
 		s.line_nr++
 		hash := s.text.substr(start, s.pos)
-		if s.is_fmt {
-			// fmt needs NL after #
-			s.pos--
-		}
 		return scan_res(.hash, hash.trim_space())
 	case `>`:
 		if nextc == `=` {
@@ -415,6 +425,10 @@ fn (s mut Scanner) scan() ScanRes {
 			s.pos++
 			return scan_res(.eq, '')
 		}
+		else if nextc == `>` {
+			s.pos++
+			return scan_res(.arrow, '')
+		} 
 		else {
 			return scan_res(.assign, '')
 		}
@@ -452,16 +466,9 @@ fn (s mut Scanner) scan() ScanRes {
 			s.line_nr++
 			s.line_comment = s.text.substr(start + 1, s.pos)
 			s.line_comment = s.line_comment.trim_space()
-			s.fgenln('// $s.line_comment')
-			if s.is_fmt {
-				// fmt needs NL after comment
-				s.pos--
-			}
-			else {
-				// Skip comment
-				return s.scan()
-			}
-			return scan_res(.line_com, s.line_comment)
+			s.fgenln('// ${s.prev_tok.str()} "$s.line_comment"')
+			// Skip the comment (return the next token) 
+			return s.scan()
 		}
 		// Multiline comments
 		if nextc == `*` {
@@ -490,9 +497,6 @@ fn (s mut Scanner) scan() ScanRes {
 			end := s.pos + 1
 			comm := s.text.substr(start, end)
 			s.fgenln(comm)
-			if s.is_fmt {
-				return scan_res(.mline_com, comm)
-			}
 			// Skip if not in fmt mode
 			return s.scan()
 		}
@@ -545,7 +549,7 @@ fn (s mut Scanner) ident_string() string {
 		}
 		prevc := s.text[s.pos - 1]
 		// end of string
-		if c == SINGLE_QUOTE && (prevc != slash || (prevc == slash && s.text[s.pos - 2] == slash)) {
+		if c == SingleQuote && (prevc != slash || (prevc == slash && s.text[s.pos - 2] == slash)) {
 			// handle '123\\'  slash at the end
 			break
 		}
@@ -562,17 +566,15 @@ fn (s mut Scanner) ident_string() string {
 			s.error('0 character in a string literal')
 		}
 		// ${var}
-		if !s.is_fmt && c == `{` && prevc == `$` {
+		if c == `{` && prevc == `$` {
 			s.inside_string = true
-			// fmt.Println("breaking out of is()")
 			// so that s.pos points to $ at the next step
 			s.pos -= 2
-			// fmt.Println("break pos=", s.pos, "c=", string(s.text[s.pos]), "d=", s.text[s.pos])
 			break
 		}
 		// $var
 		// if !s.is_fmt && c != `{` && c != ` ` && ! (c >= `0` && c <= `9`)  && prevc == `$` {
-		if !s.is_fmt && (c.is_letter() || c == `_`) && prevc == `$` {
+		if (c.is_letter() || c == `_`) && prevc == `$` {
 			s.inside_string = true
 			s.dollar_start = true
 			// println('setting s.dollar=true pos=$s.pos')
@@ -581,7 +583,7 @@ fn (s mut Scanner) ident_string() string {
 		}
 	}
 	mut lit := ''
-	if s.text[start] == SINGLE_QUOTE {
+	if s.text[start] == SingleQuote {
 		start++
 	}
 	mut end := s.pos
@@ -666,7 +668,7 @@ fn (s mut Scanner) peek() Token {
 fn (s mut Scanner) debug_tokens() {
 	s.pos = 0
 	fname := s.file_path.all_after('/')
-	println('\n===DEBUG TOKENS $fname ============')
+	println('\n===DEBUG TOKENS $fname===')
 	// allToks := ''
 	s.debug = true
 	for {

@@ -24,13 +24,13 @@ enum BuildMode {
 	build //TODO a better name would be smth like `.build_module` I think
 }
 
-fn vtmp_path() string {
-	return os.home_dir() + '/.vlang/'
+fn modules_path() string {
+	return os.home_dir() + '/.vmodules/'
 }
 
 const (
 	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd', 'netbsd', 'dragonfly'] 
-	TmpPath            = vtmp_path()
+	ModPath            = modules_path()
 )
 
 enum OS {
@@ -44,11 +44,14 @@ enum OS {
 }
 
 enum Pass {
-	// A very short pass that only looks at imports in the beginning of each file
+	// A very short pass that only looks at imports in the beginning of
+	// each file
 	imports
-	// First pass, only parses and saves declarations (fn signatures, consts, types).
+	// First pass, only parses and saves declarations (fn signatures,
+	// consts, types).
 	// Skips function bodies.
-	// We need this because in V things can be used before they are declared.
+	// We need this because in V things can be used before they are
+	// declared.
 	decl
 	// Second pass, parses function bodies and generates C or machine code.
 	main
@@ -88,12 +91,15 @@ mut:
 	sanitize       bool // use Clang's new "-fsanitize" option
 	is_debug       bool // keep compiled C files
 	no_auto_free   bool // `v -nofree` disable automatic `free()` insertion for better performance in some applications  (e.g. compilers) 
+	c_options      string // Additional options which will be passed to the C compiler.
+                        // For example, passing -c_options=-Os will cause the C compiler to optimize the generated binaries for size.
+                        // You could pass several -c_options=XXX arguments. They will be merged with each other.
 }
 
 
 fn main() {
 	// There's no `flags` module yet, so args have to be parsed manually
-	args := os.args
+	args := env_vflags_and_os_args()
 	// Print the version and exit.
 	if '-v' in args || '--version' in args || 'version' in args {
 		println('V $Version')
@@ -109,10 +115,6 @@ fn main() {
 	} 
 	// TODO quit if the compiler is too old 
 	// u := os.file_last_mod_unix('v')
-	// Create a temp directory if it's not there. 
-	if !os.file_exists(TmpPath)  { 
-		os.mkdir(TmpPath)
-	} 
 	// If there's no tmp path with current version yet, the user must be using a pre-built package
 	// Copy the `vlib` directory to the tmp path.
 /* 
@@ -134,6 +136,13 @@ fn main() {
 		println('vfmt is temporarily disabled')
 		return
 	}
+	// v get sqlite 
+	if 'get' in args { 
+		// Create the modules directory if it's not there. 
+		if !os.file_exists(ModPath)  { 
+			os.mkdir(ModPath)
+		} 
+	} 
 	// No args? REPL
 	if args.len < 2 || (args.len == 2 && args[1] == '-') {
 		run_repl()
@@ -375,7 +384,8 @@ string _STR_TMP(const char *fmt, ...) {
 		so_name := file_base + '.so' 
 		// Need to build .so file before building the live application 
 		// The live app needs to load this .so file on initialization. 
-		os.system('v -o $file_base -shared $file') 
+		vexe := os.args[0] 
+		os.system('$vexe -o $file_base -shared $file') 
 		cgen.genln('
 #include <dlfcn.h>
 void* live_lib; 
@@ -460,13 +470,13 @@ fn (c &V) cc_windows_cross() {
        }
        mut libs := ''
        if c.pref.build_mode == .default_mode {
-               libs = '"$TmpPath/vlib/builtin.o"'
+               libs = '"$ModPath/vlib/builtin.o"'
                if !os.file_exists(libs) {
                        println('`builtin.o` not found')
                        exit(1) 
                }
                for imp in c.table.imports {
-                       libs += ' "$TmpPath/vlib/${imp}.o"'
+                       libs += ' "$ModPath/vlib/${imp}.o"'
                }
        }
        args += ' $c.out_name_c '
@@ -478,10 +488,10 @@ fn (c &V) cc_windows_cross() {
                }
        }
                println('Cross compiling for Windows...')
-               winroot := '$TmpPath/winroot' 
+               winroot := '$ModPath/winroot' 
 	if !os.dir_exists(winroot) {
 		winroot_url := 'https://github.com/vlang/v/releases/download/v0.1.10/winroot.zip' 
-		println('"$winroot" not found. Download it from $winroot_url and save in $TmpPath') 
+		println('"$winroot" not found. Download it from $winroot_url and save in $ModPath') 
 		exit(1) 
  
 } 
@@ -489,7 +499,7 @@ fn (c &V) cc_windows_cross() {
                obj_name = obj_name.replace('.exe', '')
                obj_name = obj_name.replace('.o.o', '.o')
                mut include := '-I $winroot/include '
-               cmd := 'clang -o $obj_name -w $include -m32 -c -target x86_64-win32 $TmpPath/$c.out_name_c'
+               cmd := 'clang -o $obj_name -w $include -m32 -c -target x86_64-win32 $ModPath/$c.out_name_c'
                if c.pref.show_c_cmd {
                        println(cmd)
                }
@@ -526,7 +536,7 @@ fn (v mut V) cc() {
 	} 
 	linux_host := os.user_os() == 'linux'
 	v.log('cc() isprod=$v.pref.is_prod outname=$v.out_name')
-	mut a := ['-w'] // arguments for the C compiler
+	mut a := [v.pref.c_options, '-w'] // arguments for the C compiler
 	flags := v.table.flags.join(' ')
 	//mut shared := ''
 	if v.pref.is_so {
@@ -556,7 +566,7 @@ fn (v mut V) cc() {
 		// 
 	}
 	else if v.pref.build_mode == .default_mode {
-		libs = '"$TmpPath/vlib/builtin.o"'
+		libs = '"$ModPath/vlib/builtin.o"'
 		if !os.file_exists(libs) {
 			println('`builtin.o` not found')
 			exit(1)
@@ -565,7 +575,7 @@ fn (v mut V) cc() {
 			if imp == 'webview' {
 				continue
 			}
-			libs += ' "$TmpPath/vlib/${imp}.o"'
+			libs += ' "$ModPath/vlib/${imp}.o"'
 		}
 	}
 	// -I flags
@@ -615,6 +625,7 @@ mut args := ''
 	if v.pref.build_mode != .build && (v.os == .linux || v.os == .freebsd || v.os == .openbsd ||
 		v.os == .netbsd || v.os == .dragonfly) { 
 		a << '-lm -lpthread ' 
+		// -ldl is a Linux only thing. BSDs have it in libc.
 		if v.os == .linux {
 			a << ' -ldl ' 
 		} 
@@ -748,7 +759,7 @@ fn (v mut V) add_user_v_files() {
 	if v.pref.build_mode == .default_mode {
 		for i := 0; i < v.table.imports.len; i++ {
 			pkg := v.module_path(v.table.imports[i])
-			vfiles := v.v_files_from_dir('$TmpPath/vlib/$pkg')
+			vfiles := v.v_files_from_dir('$ModPath/vlib/$pkg')
 			// Add all imports referenced by these libs
 			for file in vfiles {
 				mut p := v.new_parser(file, Pass.imports)
@@ -787,7 +798,7 @@ fn (v mut V) add_user_v_files() {
 		// TmpPath/vlib
 		// These were generated by vfmt
 		if v.pref.build_mode == .default_mode || v.pref.build_mode == .build {
-			module_path = '$TmpPath/vlib/$pkg'
+			module_path = '$ModPath/vlib/$pkg'
 		}
 		if(!os.file_exists(module_path)) {
 			module_path = '$v.lang_dir/vlib/$pkg'
@@ -935,7 +946,7 @@ fn new_v(args[]string) *V {
 	]
 	// Location of all vlib files
 	vroot := os.dir(os.executable()) 
-	println('VROOT=$vroot') 
+	//println('VROOT=$vroot') 
 	// v.exe's parent directory should contain vlib 
 	if os.dir_exists(vroot) && os.dir_exists(vroot + '/vlib/builtin') {
  
@@ -957,6 +968,14 @@ fn new_v(args[]string) *V {
 			files << f
 		}
 	}
+
+	mut c_options := ''
+	for ci, cv in args {
+		if cv.starts_with('-c_options=') {
+			c_options += cv.replace('-c_options=','') + ' '
+		}
+	}
+
 	obfuscate := args.contains('-obf')
 	pref := &Preferences {
 		is_test: is_test
@@ -976,6 +995,7 @@ fn new_v(args[]string) *V {
 		is_run: args.contains('run')
 		is_repl: args.contains('-repl')
 		build_mode: build_mode
+		c_options: c_options
 	}  
 
 	if pref.is_so {
@@ -1000,9 +1020,14 @@ fn new_v(args[]string) *V {
 fn run_repl() []string {
 	println('V $Version')
 	println('Use Ctrl-C or `exit` to exit')
-	file := TmpPath + '/vrepl.v'
-	temp_file := TmpPath + '/vrepl_temp.v'
+	file := '.vrepl.v'
+	temp_file := '.vrepl_temp.v'
+	defer {
+		os.rm(file) 
+		os.rm(temp_file) 
+	} 
 	mut lines := []string
+	vexe := os.args[0] 
 	for {
 		print('>>> ')
 		mut line := os.get_raw_line()
@@ -1019,7 +1044,7 @@ fn run_repl() []string {
 		if line.starts_with('print') {
 			source_code := lines.join('\n') + '\n' + line 
 			os.write_file(file, source_code)
-			s := os.exec('v run '+TmpPath+'/vrepl.v -repl')
+			s := os.exec('$vexe run $file -repl')
 			mut vals := s.split('\n')
 			if s.contains('panic: ') {
 				if !s.contains('declared and not used') 	{
@@ -1046,7 +1071,7 @@ fn run_repl() []string {
 			}
 			temp_source_code := lines.join('\n') + '\n' + temp_line
 			os.write_file(temp_file, temp_source_code)
-			s := os.exec('v run '+TmpPath+'/vrepl_temp.v -repl')
+			s := os.exec('$vexe run $temp_file -repl')
 			if s.contains('panic: ') {
 				if !s.contains('declared and not used') 	{
 					mut vals := s.split('\n')
@@ -1097,3 +1122,18 @@ v -nofmt file.v
 are working on vlib) 
 v -embed_vlib file.v 
 */
+
+fn env_vflags_and_os_args() []string {
+   mut args := []string
+   vflags := os.getenv('VFLAGS')
+   if '' != vflags {
+     args << os.args[0]
+     args << vflags.split(' ')
+     if os.args.len > 1 {
+       args << os.args.right(1)
+     }
+   }else{
+     args << os.args
+   }
+   return args
+}
