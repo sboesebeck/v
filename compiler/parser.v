@@ -18,6 +18,7 @@ mut:
 	args            []Var // function args
 	attr            string //  [json] etc
 	is_mut          bool
+	is_alloc        bool 
 	ptr             bool
 	ref             bool
 	parent_fn       string // Variables can only be defined in functions
@@ -68,6 +69,9 @@ mut:
 	can_chash bool
 	attr string 
 	v_script bool // "V bash", import all os functions into global space 
+	var_decl_name string 	// To allow declaring the variable so that it can be used in the struct initialization 
+	building_v bool 
+	is_alloc   bool // Whether current expression resulted in an allocation 
 }
 
 const (
@@ -95,6 +99,9 @@ fn (c mut V) new_parser(path string, run Pass) Parser {
 		os: c.os
 		run: run
 		vroot: c.vroot
+		building_v: !c.pref.is_repl && (path.contains('compiler/')  || 
+			path.contains('v/vlib')) 
+			 
 	}
 	p.next()
 	// p.scanner.debug_tokens()
@@ -111,10 +118,12 @@ fn (p mut Parser) next() {
 }
 
 fn (p &Parser) log(s string) {
+/* 
 	if !p.pref.is_verbose {
 		return
 	}
 	println(s)
+*/ 
 }
 
 fn (p mut Parser) parse() {
@@ -140,6 +149,7 @@ fn (p mut Parser) parse() {
 	// Import pass - the first and the smallest pass that only analyzes imports
 	// fully qualify the module name, eg base64 to encoding.base64
 	fq_mod := p.table.qualify_module(p.mod, p.file_path)
+	p.import_table.module_name = fq_mod
 	p.table.register_package(fq_mod)
 	// replace "." with "_dot_" in module name for C variable names
 	p.mod = fq_mod.replace('.', '_dot_')
@@ -213,8 +223,9 @@ fn (p mut Parser) parse() {
 			// $if, $else
 			p.comp_time()
 		case Token.key_global:
-			if !p.pref.translated && !p.pref.is_live && !p.builtin_pkg && !p.building_v() {
-				//p.error('__global is only allowed in translated code')
+			if !p.pref.translated && !p.pref.is_live && 
+				!p.builtin_pkg && !p.building_v {
+				p.error('__global is only allowed in translated code')
 			}
 			p.next()
 			name := p.check_name()
@@ -987,9 +998,35 @@ fn (p mut Parser) statements_no_curly_end() string {
 	}
 	//p.fmt_dec() 
 	// println('close scope line=$p.scanner.line_nr')
-	p.cur_fn.close_scope()
+	p.close_scope()
 	return last_st_typ
 }
+
+fn (p mut Parser) close_scope() {
+	// println('close_scope level=$f.scope_level var_idx=$f.var_idx')
+	// Move back `var_idx` (pointer to the end of the array) till we reach the previous scope level.
+	// This effectivly deletes (closes) current scope.
+	mut i := p.cur_fn.var_idx - 1
+	for; i >= 0; i-- {
+		v := p.cur_fn.local_vars[i]
+		if v.scope_level != p.cur_fn.scope_level {
+			// println('breaking. "$v.name" v.scope_level=$v.scope_level')
+			break
+		}
+		if !p.building_v && !v.is_mut && v.is_alloc {
+			if v.typ.starts_with('array_') { 
+				p.genln('v_array_free($v.name); // close_scope free') 
+			} 
+			else { 
+				p.genln('free($v.name); // close_scope free') 
+			} 
+		} 
+
+	}
+	p.cur_fn.var_idx = i + 1
+	// println('close_scope new var_idx=$f.var_idx\n')
+	p.cur_fn.scope_level--
+} 
 
 fn (p mut Parser) genln(s string) {
 	p.cgen.genln(s)
@@ -1161,6 +1198,7 @@ fn (p mut Parser) assign_statement(v Var, ph int, is_map bool) {
 }
 
 fn (p mut Parser) var_decl() {
+	p.is_alloc = false 
 	is_mut := p.tok == .key_mut || p.prev_tok == .key_for
 	is_static := p.tok == .key_static
 	if p.tok == .key_mut {
@@ -1173,6 +1211,7 @@ fn (p mut Parser) var_decl() {
 	}
 	// println('var decl tok=${p.strtok()} ismut=$is_mut')
 	name := p.check_name()
+	p.var_decl_name = name 
 	// Don't allow declaring a variable with the same name. Even in a child scope
 	// (shadowing is not allowed)
 	if !p.builtin_pkg && p.cur_fn.known_var(name) {
@@ -1218,6 +1257,7 @@ fn (p mut Parser) var_decl() {
 		name: name
 		typ: typ
 		is_mut: is_mut
+		is_alloc: p.is_alloc 
 	})
 	mut cgen_typ := typ
 	if !or_else {
@@ -1228,6 +1268,7 @@ fn (p mut Parser) var_decl() {
 		}
 		p.cgen.set_placeholder(pos, nt_gen)
 	}
+	p.var_decl_name = '' 
 }
 
 fn (p mut Parser) bool_expression() string {
@@ -1362,7 +1403,14 @@ fn (p mut Parser) name_expr() string {
 		name = p.prepend_pkg(name)
 	}
 	// Variable
-	v := p.cur_fn.find_var(name)
+	mut v := p.cur_fn.find_var(name)
+	// A hack to allow `newvar := Foo{ field: newvar }`  
+	// Declare the variable so that it can be used in the initialization 
+	if name == 'main__' + p.var_decl_name {
+		v.name = p.var_decl_name
+		v.typ = 'voidptr' 
+		v.is_mut = true 
+	} 
 	if v.name.len != 0 {
 		if ptr {
 			p.gen('& /*vvar*/ ')
@@ -2381,6 +2429,7 @@ fn (p mut Parser) map_init() string {
 
 // [1,2,3]
 fn (p mut Parser) array_init() string {
+	p.is_alloc = true 
 	p.check(.lsbr)
 	is_integer := p.tok == .integer
 	lit := p.lit
@@ -2654,20 +2703,34 @@ fn (p mut Parser) cast(typ string) string {
 	p.expected_type = '' 
 	// `string(buffer)` => `tos2(buffer)`
 	// `string(buffer, len)` => `tos(buffer, len)`
-	if typ == 'string' && (expr_typ == 'byte*' || expr_typ == 'byteptr') {
-		if p.tok == .comma { 
-			p.check(.comma) 
-			p.cgen.set_placeholder(pos, 'tos(')
-			p.gen(', ') 
-			p.check_types(p.expression(), 'int') 
-		}  else { 
-			p.cgen.set_placeholder(pos, 'tos2(')
+	// `string(bytes_array, len)` => `tos(bytes_array.data, len)`
+	is_byteptr := expr_typ == 'byte*' || expr_typ == 'byteptr' 
+	is_bytearr := expr_typ == 'array_byte' 
+	if typ == 'string' {
+		if is_byteptr || is_bytearr { 
+			if p.tok == .comma { 
+				p.check(.comma) 
+				p.cgen.set_placeholder(pos, 'tos(')
+				if is_bytearr {
+					p.gen('.data') 
+				} 
+				p.gen(', ') 
+				p.check_types(p.expression(), 'int') 
+			}  else { 
+				if is_bytearr {
+					p.gen('.data') 
+				} 
+				p.cgen.set_placeholder(pos, 'tos2(')
+			} 
+		} 
+		// `string(234)` => error
+		else if expr_typ == 'int' {
+			p.error('cannot cast `$expr_typ` to `$typ`, use `str()` method instead')
+		} 
+		else {
+			p.error('cannot cast `$expr_typ` to `$typ`') 
 		} 
 	}
-	// `string(234)` => error
-	else if typ == 'string' && expr_typ == 'int' {
-		p.error('cannot cast `$expr_typ` to `$typ`, use `str()` method instead')
-	} 
 	else {
 		p.cgen.set_placeholder(pos, '($typ)(')
 	}
@@ -3090,7 +3153,7 @@ fn (p mut Parser) for_st() {
 	p.check(.lcbr)
 	p.genln('') 
 	p.statements()
-	p.cur_fn.close_scope()
+	p.close_scope()
 	p.for_expr_cnt--
 }
 
@@ -3176,12 +3239,11 @@ g_test_ok = 0 ;
 	// Maybe print all vars in a test function if it fails? 
 } 
 else { 
-  puts("\\x1B[32mPASSED: $p.cur_fn.name()\\x1B[0m");
+  //puts("\\x1B[32mPASSED: $p.cur_fn.name()\\x1B[0m");
 }')
 }
 
 fn (p mut Parser) return_st() {
-	p.cgen.insert_before(p.cur_fn.defer_text)
 	p.check(.key_return)
 	p.fgen(' ') 
 	fn_returns := p.cur_fn.typ != 'void'
@@ -3198,11 +3260,20 @@ fn (p mut Parser) return_st() {
 				ret := p.cgen.cur_line.right(ph)
 
 				p.cgen.resetln('$expr_type $tmp = ($expr_type)($ret);')
+				p.cgen(p.cur_fn.defer_text) 
 				p.gen('return opt_ok(&$tmp, sizeof($expr_type))')
 			}
 			else {
 				ret := p.cgen.cur_line.right(ph)
-				p.cgen.resetln('return $ret')
+				p.cgen(p.cur_fn.defer_text) 
+				if p.cur_fn.defer_text == '' || expr_type == 'void*' { 
+					p.cgen.resetln('return $ret')
+				}  else { 
+					tmp := p.get_tmp() 
+					p.cgen.resetln('$expr_type $tmp = $ret;') 
+					p.genln(p.cur_fn.defer_text) 
+					p.genln('return $tmp;') 
+				} 
 			}
 			p.check_types(expr_type, p.cur_fn.typ)
 		}
@@ -3336,10 +3407,12 @@ fn is_compile_time_const(s string) bool {
 	return true
 }
 
+/* 
 fn (p &Parser) building_v() bool {
 	cur_dir := os.getwd()
 	return p.file_path.contains('v/compiler') || cur_dir.contains('v/compiler') 
 }
+*/ 
 
 fn (p mut Parser) attribute() {
 	p.check(.lsbr)
@@ -3367,7 +3440,7 @@ fn (p mut Parser) defer_st() {
 	p.check(.lcbr) 
 	p.genln('{') 
 	p.statements() 
-	p.cur_fn.defer_text = p.cgen.lines.right(pos).join('\n') 
+	p.cur_fn.defer_text = p.cgen.lines.right(pos).join('\n') + p.cur_fn.defer_text 
 	p.genln('*/') 
 }  
 
