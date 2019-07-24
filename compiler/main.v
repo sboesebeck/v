@@ -9,7 +9,7 @@ import time
 import strings
 
 const (
-	Version = '0.1.15'  
+	Version = '0.1.16'  
 )
 
 enum BuildMode {
@@ -29,7 +29,7 @@ fn modules_path() string {
 }
 
 const (
-	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd', 'netbsd', 'dragonfly'] 
+	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd', 'netbsd', 'dragonfly', 'msvc'] 
 	ModPath            = modules_path()
 )
 
@@ -41,6 +41,7 @@ enum OS {
 	openbsd 
 	netbsd 
 	dragonfly 
+	msvc 
 }
 
 enum Pass {
@@ -189,19 +190,24 @@ fn (v mut V) compile() {
 #include <inttypes.h>  // int64_t etc 
 
 
-#if defined(__linux__) || defined(__OpenBSD__) 
-#include <pthread.h> 
-#endif 
-
-
-#ifdef __APPLE__ 
-
-#endif 
-
-
-#ifdef _WIN32 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-//#include <WinSock2.h> 
+//#include <WinSock2.h>
+#ifdef _MSC_VER
+// On MSVC these are the same (as long as /volatile:ms is passed)
+#define _Atomic volatile
+#endif
+
+void pthread_mutex_lock(HANDLE *m) {
+	WaitForSingleObject(*m, INFINITE);
+}
+
+void pthread_mutex_unlock(HANDLE *m) {
+	ReleaseMutex(*m);
+}
+#else
+#include <pthread.h> 
 #endif 
 
 //================================== TYPEDEFS ================================*/ 
@@ -244,6 +250,7 @@ typedef map map_string;
 #define _PUSH(arr, val, tmp, tmp_typ) {tmp_typ tmp = (val); array__push(arr, &tmp);}
 #define _PUSH_MANY(arr, val, tmp, tmp_typ) {tmp_typ tmp = (val); array__push_many(arr, tmp.data, tmp.len);}
 #define _IN(typ, val, arr) array_##typ##_contains(arr, val) 
+#define _IN_MAP(val, m) map__exists(m, val) 
 #define ALLOC_INIT(type, ...) (type *)memdup((type[]){ __VA_ARGS__ }, sizeof(type)) 
 
 //================================== GLOBALS =================================*/   
@@ -252,6 +259,24 @@ byteptr g_str_buf;
 int load_so(byteptr);
 void reload_so();
 void init_consts();')
+	
+	if v.os != .windows && v.os != .msvc {
+		if v.pref.is_so {
+			cgen.genln('pthread_mutex_t live_fn_mutex;')
+		}  
+		if v.pref.is_live {
+			cgen.genln('pthread_mutex_t live_fn_mutex = PTHREAD_MUTEX_INITIALIZER;')
+		}
+	} else {
+		if v.pref.is_so {
+			cgen.genln('HANDLE live_fn_mutex;')
+		}  
+		if v.pref.is_live {
+			cgen.genln('HANDLE live_fn_mutex = 0;')
+		}
+	}
+
+	
 	imports_json := v.table.imports.contains('json')
 	// TODO remove global UI hack
 	if v.os == .mac && ((v.pref.build_mode == .embed_vlib && v.table.imports.contains('ui')) ||
@@ -385,36 +410,132 @@ string _STR_TMP(const char *fmt, ...) {
 		so_name := file_base + '.so' 
 		// Need to build .so file before building the live application 
 		// The live app needs to load this .so file on initialization. 
-		vexe := os.args[0] 
-		os.system('$vexe -o $file_base -shared $file') 
+		mut vexe := os.args[0]
+
+		if os.user_os() == 'windows' {
+			vexe = vexe.replace('\\', '\\\\')
+		}
+
+		mut msvc := ''
+		if v.os == .msvc {
+			msvc = '-os msvc'
+		}
+
+		mut debug := ''
+
+		if v.pref.is_debug {
+			debug = '-debug'
+		}
+
+		os.system('$vexe $msvc $debug -o $file_base -shared $file') 
 		cgen.genln('
+
+void lfnmutex_print(char *s){
+	if(0){
+		fflush(stderr);
+		fprintf(stderr,">> live_fn_mutex: %p | %s\\n", &live_fn_mutex, s);
+		fflush(stderr);
+	}
+}
+')
+
+		if v.os != .windows && v.os != .msvc {
+			cgen.genln('
 #include <dlfcn.h>
-void* live_lib; 
+void* live_lib=0;
 int load_so(byteptr path) {
 	char cpath[1024];
 	sprintf(cpath,"./%s", path);
 	//printf("load_so %s\\n", cpath); 
-	if (live_lib) dlclose(live_lib); 
+	if (live_lib) dlclose(live_lib);
 	live_lib = dlopen(cpath, RTLD_LAZY);
-	if (!live_lib) {puts("open failed"); exit(1); return 0;} 
+	if (!live_lib) {
+		puts("open failed"); 
+		exit(1); 
+		return 0;
+	}
 ')
-		for so_fn in cgen.so_fns {
-			cgen.genln('$so_fn = dlsym(live_lib, "$so_fn");  ')
+			for so_fn in cgen.so_fns {
+				cgen.genln('$so_fn = dlsym(live_lib, "$so_fn");  ')
+			}
 		}
-		cgen.genln('return 1; }
- 
+		else {
+			cgen.genln('
+void* live_lib=0;
+int load_so(byteptr path) {
+	char cpath[1024];
+	sprintf(cpath, "./%s", path);
+	if (live_lib) FreeLibrary(live_lib);
+	live_lib = LoadLibraryA(cpath);
+	if (!live_lib) {
+		puts("open failed");
+		exit(1);
+		return 0;
+	}
+')
+
+			for so_fn in cgen.so_fns {
+				cgen.genln('$so_fn = (void *)GetProcAddress(live_lib, "$so_fn");  ')
+			}
+		}
+		
+		cgen.genln('return 1; 
+}
+
+int _live_reloads = 0;
 void reload_so() {
+	char new_so_base[1024];
+	char new_so_name[1024];
+	char compile_cmd[1024];
 	int last = os__file_last_mod_unix(tos2("$file"));
 	while (1) {
-		// TODO use inotify 
-		int now = os__file_last_mod_unix(tos2("$file")); 
+		// TODO use inotify
+		int now = os__file_last_mod_unix(tos2("$file"));
 		if (now != last) {
-			//v -o bounce -shared bounce.v 
-			os__system(tos2("$vexe -o $file_base -shared $file")); 
-			last = now; 
-			load_so("$so_name"); 
+			last = now;
+			_live_reloads++;
+
+			//v -o bounce -shared bounce.v
+			sprintf(new_so_base, ".tmp.%d.${file_base}", _live_reloads);
+			#ifdef _WIN32
+			// We have to make this directory becuase windows WILL NOT
+			// do it for us
+			os__mkdir(string_all_before_last(tos2(new_so_base), tos2("/")));
+			#endif
+			#ifdef _MSC_VER
+			sprintf(new_so_name, "%s.dll", new_so_base);
+			#else
+			sprintf(new_so_name, "%s.so", new_so_base);
+			#endif
+			sprintf(compile_cmd, "$vexe $msvc -o %s -shared $file", new_so_base);
+			os__system(tos2(compile_cmd));
+
+			if( !os__file_exists(tos2(new_so_name)) ) {
+				fprintf(stderr, "Errors while compiling $file\\n");
+				continue;        
+			}
+      
+			lfnmutex_print("reload_so locking...");
+			pthread_mutex_lock(&live_fn_mutex);
+			lfnmutex_print("reload_so locked");
+        
+			live_lib = 0; // hack: force skipping dlclose/1, the code may be still used...
+			load_so(new_so_name);
+			#ifndef _WIN32
+			unlink(new_so_name); // removing the .so file from the filesystem after dlopen-ing it is safe, since it will still be mapped in memory.
+			#else
+			_unlink(new_so_name);
+			#endif
+			//if(0 == rename(new_so_name, "${so_name}")){
+			//	load_so("${so_name}"); 
+			//}
+
+			lfnmutex_print("reload_so unlocking...");  
+			pthread_mutex_unlock(&live_fn_mutex);  
+			lfnmutex_print("reload_so unlocked");
+
 		}
-		time__sleep_ms(400); 
+		time__sleep_ms(100); 
 	}
 }
 ' ) 
@@ -440,7 +561,8 @@ void reload_so() {
 			'./' + v.out_name
 		}
 		$if windows {
-			cmd = v.out_name 
+			cmd = v.out_name
+			cmd = cmd.replace('/', '\\')
 		} 
 		if os.args.len > 3 {
 			cmd += ' ' + os.args.right(3).join(' ')
@@ -524,8 +646,6 @@ fn (c &V) cc_windows_cross() {
                }
                println('Done!')
 }
- 
- 
 
 fn (v mut V) cc() {
 	// Cross compiling for Windows 
@@ -534,6 +654,12 @@ fn (v mut V) cc() {
 			v.cc_windows_cross()  
 			return 
 		} 
+	} 
+	$if windows { 
+		if v.os == .msvc {
+			cc_msvc(v)
+			return
+		}
 	} 
 	linux_host := os.user_os() == 'linux'
 	v.log('cc() isprod=$v.pref.is_prod outname=$v.out_name')
@@ -642,7 +768,11 @@ mut args := ''
 	//}
 	$if windows {
 		cmd = 'gcc $args' 
-	} 
+	}
+	if v.out_name.ends_with('.c') {
+		os.mv( '.$v.out_name_c', v.out_name )
+		exit(0)
+	}
 	// Run
 	ticks := time.ticks() 
 	res := os.exec(cmd)
@@ -703,7 +833,7 @@ fn (v &V) v_files_from_dir(dir string) []string {
 		if file.ends_with('_test.v') {
 			continue
 		}
-		if file.ends_with('_win.v') && v.os != .windows {
+		if file.ends_with('_win.v') && (v.os != .windows && v.os != .msvc) {
 			continue
 		}
 		if file.ends_with('_lin.v') && v.os != .linux { 
@@ -712,7 +842,7 @@ fn (v &V) v_files_from_dir(dir string) []string {
 		if file.ends_with('_mac.v') && v.os != .mac { 
 			continue
 		} 
-		if file.ends_with('_nix.v') && v.os == .windows {
+		if file.ends_with('_nix.v') && (v.os == .windows || v.os == .msvc) {
 			continue 
 		} 
 		res << '$dir/$file'
@@ -955,6 +1085,7 @@ fn new_v(args[]string) *V {
 		case 'openbsd': _os = .openbsd 
 		case 'netbsd': _os = .netbsd 
 		case 'dragonfly': _os = .dragonfly 
+		case 'msvc': _os = .msvc
 		}
 	}
 	builtins := [
