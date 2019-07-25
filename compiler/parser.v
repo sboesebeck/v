@@ -27,6 +27,7 @@ mut:
 	access_mod      AccessMod
 	is_global       bool // __global (translated from C only)
 	is_used         bool
+	is_changed      bool 
 	scope_level     int
 }
 
@@ -618,8 +619,8 @@ fn (p mut Parser) struct_decl() {
 
 	p.check(.rcbr)
 	if !is_c {
-		if p.os == .msvc && !did_gen_something {
-			p.gen_type('void *____dummy_variable; };')
+		if !did_gen_something {
+			p.gen_type('EMPTY_STRUCT_DECLARATION };')
 			p.fgenln('')
 		} else {
 			p.gen_type('}; ')
@@ -671,12 +672,7 @@ fn (p mut Parser) enum_decl(_enum_name string) {
 
 // check_name checks for a name token and returns its literal
 fn (p mut Parser) check_name() string {
-	if p.tok == .key_type {
-		p.check(.key_type) 
-		return 'type' 
-	} 
 	name := p.lit
-	 
 	p.check(.name)
 	return name
 }
@@ -713,7 +709,7 @@ fn (p mut Parser) check_space(expected Token) {
 fn (p mut Parser) check(expected Token) {
 	if p.tok != expected {
 		println('check()')
-		mut s := 'expected `${expected.str()}` but got `${p.strtok()}`'
+		s := 'expected `${expected.str()}` but got `${p.strtok()}`'
 		p.next()
 		println('next token = `${p.strtok()}`')
 		print_backtrace()
@@ -766,7 +762,7 @@ fn (p mut Parser) error(s string) {
 	}
 	// p.scanner.debug_tokens()
 	// Print `[]int` instead of `array_int` in errors
-	p.scanner.error(s.replace('array_', '[]').replace('__', '.'))
+	p.scanner.error(s.replace('array_', '[]').replace('__', '.').replace('Option_', '?')) 
 }
 
 fn (p &Parser) first_run() bool {
@@ -1023,6 +1019,9 @@ fn (p mut Parser) close_scope() {
 			if v.typ.starts_with('array_') { 
 				p.genln('v_array_free($v.name); // close_scope free') 
 			} 
+			else if v.typ == 'string' { 
+				p.genln('v_string_free($v.name); // close_scope free') 
+			} 
 			else { 
 				p.genln('free($v.name); // close_scope free') 
 			} 
@@ -1160,6 +1159,9 @@ fn (p mut Parser) assign_statement(v Var, ph int, is_map bool) {
 	if !v.is_mut && !v.is_arg && !p.pref.translated && !v.is_global{
 		p.error('`$v.name` is immutable')
 	}
+	if !v.is_changed {
+		p.cur_fn.mark_var_changed(v) 
+	} 
 	is_str := v.typ == 'string'
 	switch tok {
 	case Token.assign:
@@ -1265,10 +1267,9 @@ fn (p mut Parser) var_decl() {
 		is_mut: is_mut
 		is_alloc: p.is_alloc 
 	})
-	mut cgen_typ := typ
 	if !or_else {
 		gen_name := p.table.var_cgen_name(name)
-		mut nt_gen := p.table.cgen_name_type_pair(gen_name, cgen_typ) + '='
+		mut nt_gen := p.table.cgen_name_type_pair(gen_name, typ) + '='
 		if is_static {
 			nt_gen = 'static $nt_gen'
 		}
@@ -1504,7 +1505,7 @@ fn (p mut Parser) name_expr() string {
 		return cfn.typ
 	}
 	// Constant
-	mut c := p.table.find_const(name)
+	c := p.table.find_const(name)
 	if c.name != '' && ptr && !c.is_global {
 		p.error('cannot take the address of constant `$c.name`')
 	}
@@ -1616,6 +1617,9 @@ fn (p mut Parser) var_expr(v Var) string {
 		if !v.is_mut && !v.is_arg && !p.pref.translated {
 			p.error('`$v.name` is immutable')
 		}
+		if !v.is_changed {
+			p.cur_fn.mark_var_changed(v) 
+		} 
 		if typ != 'int' {
 			if !p.pref.translated && !is_number_type(typ) {
 				p.error('cannot ++/-- value of type `$typ`')
@@ -1651,10 +1655,7 @@ fn (p &Parser) fileis(s string) bool {
 // user.company.name => `str_typ` is `Company`
 fn (p mut Parser) dot(str_typ string, method_ph int) string {
 	p.check(.dot)
-	mut field_name := p.lit
-	if p.tok == .key_type {
-		field_name = 'type' 
-	} 
+	field_name := p.lit
 	p.fgen(field_name) 
 	p.log('dot() field_name=$field_name typ=$str_typ')
 	//if p.fileis('main.v') {
@@ -1718,7 +1719,7 @@ fn (p mut Parser) dot(str_typ string, method_ph int) string {
 		return field.typ
 	}
 	// method
-	mut method := p.table.find_method(typ, field_name)
+	method := p.table.find_method(typ, field_name)
 	p.fn_call(method, method_ph, '', str_typ)
 	// Methods returning `array` should return `array_string` 
 	if method.typ == 'array' && typ.name.starts_with('array_') {
@@ -1736,11 +1737,12 @@ fn (p mut Parser) dot(str_typ string, method_ph int) string {
 }
 
 fn (p mut Parser) index_expr(typ string, fn_ph int) string {
-	//if p.fileis('main.v') {
-		//println('index expr typ=$typ')
-	//}
 	// a[0]
 	v := p.expr_var
+	//if p.fileis('fn_test.v') {
+		//println('index expr typ=$typ')
+		//println(v.name) 
+	//}
 	is_map := typ.starts_with('map_')
 	is_str := typ == 'string'
 	is_arr0 := typ.starts_with('array_')
@@ -1846,6 +1848,7 @@ fn (p mut Parser) index_expr(typ string, fn_ph int) string {
 			p.gen(']/*r$typ $v.is_mut*/')
 		}
 	}
+	// TODO move this from index_expr() 
 	// TODO if p.tok in ...
 	// if p.tok in [.assign, .plus_assign, .minus_assign]
 	if p.tok == .assign || p.tok == .plus_assign || p.tok == .minus_assign ||
@@ -1902,7 +1905,7 @@ fn (p mut Parser) index_expr(typ string, fn_ph int) string {
 		if is_map {
 			p.gen('$tmp')
 			mut def := type_default(typ)
-			if p.os == .msvc && def == '{}' {
+			if def == 'STRUCT_DEFAULT_VALUE' {
 				def = '{0}'
 			}
 			p.cgen.insert_before('$typ $tmp = $def; bool $tmp_ok = map_get($index_expr, & $tmp);')
@@ -1912,7 +1915,11 @@ fn (p mut Parser) index_expr(typ string, fn_ph int) string {
 				p.gen('$index_expr ]')
 			}
 			else {
-				p.gen('( *($typ*) array__get($index_expr) )')
+				if is_ptr { 
+					p.gen('( *($typ*) array__get(* $index_expr) )')
+				}  else { 
+					p.gen('( *($typ*) array__get($index_expr) )')
+				} 
 			}
 		}
 		else if is_str && !p.builtin_pkg {
@@ -1955,6 +1962,9 @@ fn (p mut Parser) expression() string {
 			if !p.expr_var.is_mut && !p.pref.translated {
 				p.error('`$p.expr_var.name` is immutable (can\'t <<)')
 			}
+			if !p.expr_var.is_changed {
+				p.cur_fn.mark_var_changed(p.expr_var) 
+			} 
 			expr_type := p.expression() 
 			// Two arrays of the same type? 
 			push_array :=  typ == expr_type
@@ -2028,7 +2038,7 @@ fn (p mut Parser) expression() string {
 		}
 		// 3 + 4
 		else if is_num {
-			if p.os == .msvc && typ == 'void*' {
+			if typ == 'void*' {
 				// Msvc errors on void* pointer arithmatic
 				// ... So cast to byte* and then do the add
 				p.cgen.set_placeholder(ph, '(byte*)')
@@ -2076,13 +2086,13 @@ fn (p mut Parser) expression() string {
 
 fn (p mut Parser) term() string {
 	line_nr := p.scanner.line_nr
-	if p.fileis('fn_test') {
-		println('\nterm() $line_nr')
-	}
+	//if p.fileis('fn_test') {
+		//println('\nterm() $line_nr')
+	//}
 	typ := p.unary()
-	if p.fileis('fn_test') {
-		println('2: $line_nr')
-	}
+	//if p.fileis('fn_test') {
+		//println('2: $line_nr')
+	//}
 	// `*` on a newline? Can't be multiplication, only dereference
 	if p.tok == .mul && line_nr != p.scanner.line_nr {
 		return typ
@@ -2338,6 +2348,7 @@ fn (p mut Parser) string_expr() {
 		return
 	}
 	// tmp := p.get_tmp()
+	p.is_alloc = true // $ interpolation means there's allocation 
 	mut args := '"'
 	mut format := '"'
 	p.fgen('\'') 
@@ -2470,11 +2481,7 @@ fn (p mut Parser) array_init() string {
 					name := p.check_name()
 					if p.table.known_type(name) {
 						p.cgen.resetln('')
-						if p.os == .msvc {
-							p.gen('{0}')
-						} else {
-							p.gen('{}')
-						}
+						p.gen('STRUCT_DEFAULT_VALUE')
 						return '[$lit]$name'
 					}
 					else {
@@ -2558,8 +2565,8 @@ fn (p mut Parser) array_init() string {
 	// p.gen('$new_arr($vals.len, $vals.len, sizeof($typ), ($typ[]) $c_arr );')
 	// TODO why need !first_run()?? Otherwise it goes to the very top of the out.c file
 	if !p.first_run() {
-		if p.os == .msvc && i == 0 {
-			p.cgen.set_placeholder(new_arr_ph, '$new_arr($i, $i, sizeof($typ), ($typ[]) {0 ')
+		if i == 0 {
+			p.cgen.set_placeholder(new_arr_ph, '$new_arr($i, $i, sizeof($typ), ($typ[]) {EMPTY_STRUCT_INIT ')
 		} else {
 			p.cgen.set_placeholder(new_arr_ph, '$new_arr($i, $i, sizeof($typ), ($typ[]) { ')
 		}
@@ -2669,7 +2676,7 @@ fn (p mut Parser) struct_init(is_c_struct_init bool) string {
 				p.error('pointer field `${typ}.${field.name}` must be initialized')
 			}
 			def_val := type_default(field_typ)
-			if def_val != '' && def_val != '{}' {
+			if def_val != '' && def_val != 'STRUCT_DEFAULT_VALUE' {
 				p.gen('.$field.name = $def_val')
 				if i != t.fields.len - 1 {
 					p.gen(',')
@@ -2709,8 +2716,8 @@ fn (p mut Parser) struct_init(is_c_struct_init bool) string {
 		did_gen_something = true
 	}
 
-	if p.os == .msvc && !did_gen_something {
-		p.gen('0')
+	if !did_gen_something {
+		p.gen('EMPTY_STRUCT_INIT')
 	}
 
 	p.gen('}')
@@ -3094,6 +3101,7 @@ fn (p mut Parser) for_st() {
 				typ: 'int'
 				// parent_fn: p.cur_fn
 				is_mut: true
+				is_changed: true 
 			}
 			p.register_var(i_var)
 			p.genln(';\nfor (int $i = 0; $i < $tmp .len; $i ++) {')
@@ -3104,6 +3112,7 @@ fn (p mut Parser) for_st() {
 				name: i
 				typ: 'string'
 				is_mut: true
+				is_changed: true 
 			}
 			p.register_var(i_var)
 			p.genln('array_string keys_$tmp = map_keys(& $tmp ); ') 
@@ -3111,19 +3120,12 @@ fn (p mut Parser) for_st() {
 			p.genln('  string $i = ((string*)keys_$tmp .data)[l];') 
 			//p.genln('  string $i = *(string*) ( array__get(keys_$tmp, l) );') 
 			mut def := type_default(typ)
-			if def == '{}' {
+			if def == 'STRUCT_DEFAULT_VALUE' {
 				def = '{0}'
 			}
 			// TODO don't call map_get() for each key, fetch values while traversing
 			// the tree (replace `map_keys()` above with `map_key_vals()`) 
 			p.genln('$var_typ $val = $def; map_get($tmp, $i, & $val);') 
-			
-			/* 
-			p.genln('for (int l = 0; l < $tmp . entries.len; l++) {') 
-			p.genln('Entry entry = *((Entry*) (array__get($tmp .entries, l)));') 
-			p.genln('string $i = entry.key;') 
-			p.genln('$var_typ $val; map_get($tmp, $i, & $val);') 
-			*/ 
 		} 
 	}
 	// `for val in vals`
@@ -3168,6 +3170,7 @@ fn (p mut Parser) for_st() {
 			name: val
 			typ: var_type
 			ptr: typ.contains('*')
+			is_changed: true 
 		}
 		p.register_var(val_var)
 		i := p.get_tmp()
@@ -3303,15 +3306,8 @@ fn (p mut Parser) return_st() {
 				tmp := p.get_tmp()
 				ret := p.cgen.cur_line.right(ph)
 
-				if p.os != .msvc {
-					p.cgen.cur_line = '$expr_type $tmp = ($expr_type)($ret);'
-					p.cgen.resetln('$expr_type $tmp = ($expr_type)($ret);')
-				} else {
-					// Both the return type and the expression type have already been concluded
-					// to be the same - the cast is slightly pointless
-					// and msvc cant do it
-					p.cgen.resetln('$expr_type $tmp = ($ret);')
-				}
+				p.cgen.cur_line = '$expr_type $tmp = OPTION_CAST($expr_type)($ret);'
+				p.cgen.resetln('$expr_type $tmp = OPTION_CAST($expr_type)($ret);')
 				p.gen('return opt_ok(&$tmp, sizeof($expr_type))')
 			}
 			else {
@@ -3364,7 +3360,7 @@ fn (p mut Parser) go_statement() {
 		p.next()
 		p.check(.dot)
 		typ := p.table.find_type(v.typ)
-		mut method := p.table.find_method(typ, p.lit)
+		method := p.table.find_method(typ, p.lit)
 		p.async_fn_call(method, 0, var_name, v.typ)
 	}
 	// Normal function

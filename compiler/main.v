@@ -189,10 +189,15 @@ fn (v mut V) compile() {
 #include <stdarg.h> // for va_list 
 #include <inttypes.h>  // int64_t etc 
 
+#define STRUCT_DEFAULT_VALUE {}
+#define EMPTY_STRUCT_DECLARATION
+#define EMPTY_STRUCT_INIT
+#define OPTION_CAST(x) (x)
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 #include <io.h> // _waccess
 #include <fcntl.h> // _O_U8TEXT
 #include <direct.h> // _wgetcwd
@@ -200,6 +205,16 @@ fn (v mut V) compile() {
 #ifdef _MSC_VER
 // On MSVC these are the same (as long as /volatile:ms is passed)
 #define _Atomic volatile
+
+// MSVC can\'t parse some things properly
+#undef STRUCT_DEFAULT_VALUE
+#define STRUCT_DEFAULT_VALUE {0}
+#undef EMPTY_STRUCT_DECLARATION
+#define EMPTY_STRUCT_DECLARATION void *____dummy_variable;
+#undef EMPTY_STRUCT_INIT
+#define EMPTY_STRUCT_INIT 0
+#undef OPTION_CAST
+#define OPTION_CAST(x)
 #endif
 
 void pthread_mutex_lock(HANDLE *m) {
@@ -624,7 +639,7 @@ fn (c &V) cc_windows_cross() {
                mut obj_name := c.out_name
                obj_name = obj_name.replace('.exe', '')
                obj_name = obj_name.replace('.o.o', '.o')
-               mut include := '-I $winroot/include '
+               include := '-I $winroot/include '
                cmd := 'clang -o $obj_name -w $include -DUNICODE -D_UNICODE -m32 -c -target x86_64-win32 $ModPath/$c.out_name_c'
                if c.pref.show_c_cmd {
                        println(cmd)
@@ -1244,7 +1259,7 @@ fn run_repl() []string {
 			}
 			else {
 				lines << line
-				mut vals := s.split('\n')
+				vals := s.split('\n')
 				for i:=0; i<vals.len-1; i++ {
 					println(vals[i])
 				} 

@@ -49,9 +49,20 @@ fn (f mut Fn) open_scope() {
 fn (f &Fn) mark_var_used(v Var) {
 	for i, vv in f.local_vars {
 		if vv.name == v.name {
-			mut ptr := &f.local_vars[i]
-			ptr.is_used = true
-			// / f.local_vars[i].is_used = true
+			//mut ptr := &f.local_vars[i]
+			//ptr.is_used = true
+			f.local_vars[i].is_used = true
+			return
+		}
+	}
+}
+
+fn (f &Fn) mark_var_changed(v Var) {
+	for i, vv in f.local_vars {
+		if vv.name == v.name {
+			//mut ptr := &f.local_vars[i]
+			//ptr.is_used = true
+			f.local_vars[i].is_changed = true
 			// return
 		}
 	}
@@ -86,13 +97,11 @@ fn (p mut Parser) is_sig() bool {
 }
 
 fn new_fn(pkg string, is_public bool) *Fn {
-	mut f := &Fn {
+	return &Fn {
 		pkg: pkg
-		local_vars: [Var{}
-		; MaxLocalVars]
+		local_vars: [Var{}		; MaxLocalVars]
 		is_public: is_public
 	}
-	return f
 }
 
 // Function signatures are added to the top of the .c file in the first run.
@@ -444,6 +453,11 @@ fn (p mut Parser) check_unused_variables() {
 			p.scanner.line_nr = var.line_nr - 1
 			p.error('`$var.name` declared and not used')
 		}
+ 
+		if !var.is_changed && var.is_mut && !p.pref.is_repl && !var.is_arg && !p.pref.translated && var.name != '_' {
+			p.scanner.line_nr = var.line_nr - 1
+			p.error('`$var.name` is declared mutable, but it was never changed') 
+		}
 	}
 }
 
@@ -493,9 +507,9 @@ fn (p mut Parser) async_fn_call(f Fn, method_ph int, receiver_var, receiver_type
 		did_gen_something = true
 	}
 
-	if p.os == .msvc && !did_gen_something {
+	if !did_gen_something {
 		// Msvc doesnt like empty struct
-		arg_struct += 'void *____dummy_variable;'
+		arg_struct += 'EMPTY_STRUCT_DECLARATION'
 	}
 
 	arg_struct += '} $arg_struct_name ;'
@@ -555,7 +569,10 @@ fn (p mut Parser) fn_call(f Fn, method_ph int, receiver_var, receiver_type strin
 		if receiver.is_mut && !p.expr_var.is_mut {
 			println('$method_call  recv=$receiver.name recv_mut=$receiver.is_mut')
 			p.error('`$p.expr_var.name` is immutable')
-		}
+		} 
+		if !p.expr_var.is_changed {
+			p.cur_fn.mark_var_changed(p.expr_var) 
+		} 
 		// if receiver is key_mut or a ref (&), generate & for the first arg
 		if receiver.ref || (receiver.is_mut && !receiver_type.contains('*')) {
 			method_call += '& /* ? */'
@@ -626,18 +643,21 @@ fn (p mut Parser) fn_args(f mut Fn) {
 		if is_mut {
 			p.next()
 		}
-		mut typ2 := p.get_type()
+		mut typ := p.get_type()
+		if is_mut && is_primitive_type(typ) {
+			p.error('mutable arguments are only allowed for arrays, maps, and structs.' + 
+			'\nreturn values instead: `foo(n mut int)` => `foo(n int) int`') 
+		} 
 		for name in names {
-			if !p.first_run() && !p.table.known_type(typ2) {
-				p.error('fn_args: unknown type $typ2')
+			if !p.first_run() && !p.table.known_type(typ) { 
+				p.error('fn_args: unknown type $typ')
 			}
-			if is_mut {
-				// && !typ2.starts_with('array_') {
-				typ2 += '*'
+			if is_mut { 
+				typ += '*'
 			}
 			v := Var {
 				name: name
-				typ: typ2
+				typ: typ 
 				is_arg: true
 				is_mut: is_mut
 				ptr: is_mut
@@ -658,6 +678,7 @@ fn (p mut Parser) fn_args(f mut Fn) {
 	}
 }
 
+// foo *(1, 2, 3, mut bar)* 
 fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 	// p.gen('(')
 	// println('fn_call_args() name=$f.name args.len=$f.args.len')
@@ -705,7 +726,15 @@ fn (p mut Parser) fn_call_args(f *Fn) *Fn {
 				p.error('`$arg.name` is a key_mut argument, you need to provide a variable to modify: `$f.name(... mut a...)`')
 			}
 			p.check(.key_mut)
-		}
+			var_name := p.lit 
+			v := p.cur_fn.find_var(var_name) 
+			if v.name == '' { 
+				p.error('`$arg.name` is a key_mut argument, you need to provide a variable to modify: `$f.name(... mut a...)`')
+			} 
+			if !v.is_changed {
+				p.cur_fn.mark_var_changed(v) 
+			} 
+		} 
 		p.expected_type = arg.typ 
 		typ := p.bool_expression()
 		// Optimize `println`: replace it with `printf` to avoid extra allocations and
