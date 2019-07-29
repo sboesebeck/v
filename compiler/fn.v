@@ -453,10 +453,9 @@ fn (p mut Parser) check_unused_variables() {
 			p.scanner.line_nr = var.line_nr - 1
 			p.error('`$var.name` declared and not used')
 		}
- 
 		if !var.is_changed && var.is_mut && !p.pref.is_repl && !var.is_arg && !p.pref.translated && var.name != '_' {
 			p.scanner.line_nr = var.line_nr - 1
-			p.error('`$var.name` is declared mutable, but it was never changed') 
+			p.error('`$var.name` is declared as mutable, but it was never changed') 
 		}
 	}
 }
@@ -889,7 +888,13 @@ fn (f &Fn) str_args(table *Table) string {
 			// Now  all methods
 			interface_type := table.find_type(arg.typ)
 			for method in interface_type.methods {
-				s += ', $method.typ (*${arg.typ}_${method.name})(void*) '
+				s += ', $method.typ (*${arg.typ}_${method.name})(void*'
+				if method.args.len > 1 {
+					for a in method.args.right(1) {
+						s += ', $a.typ'
+					}
+				}
+				s += ')'
 			}
 		}
 		else if arg.name == '..' {

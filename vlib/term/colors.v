@@ -6,28 +6,12 @@ module term
 
 import os
 
-// Calling this functions enables color terminal output on windows
-// Maybe implement a way to auto run an init function when a module
-// is imported on a certain os. for example to run this?
-pub fn enable_term_color_win() {
-    $if windows {
-        h_output := C.GetStdHandle(os.STD_OUTPUT_HANDLE)
-        if h_output == os.INVALID_HANDLE_VALUE
-            || !C.SetConsoleMode(h_output, os.ENABLE_PROCESSED_OUTPUT|os.ENABLE_VIRTUAL_TERMINAL_PROCESSING) {
-            println('enable_term_color_win() Sorry, there was an error enabling terminal color.')
-        }
-    }
-    $else {
-        println('enable_term_color_win() should only be called on windows.')
-    }
+fn _format(msg, open, close string) string {
+    return '\x1b[' + open + 'm' + msg + '\x1b[' + close + 'm'
 }
 
 pub fn format(msg, open, close string) string {
-    $if windows {
-        enable_term_color_win()
-    }
-
-    return '\x1b[' + open + 'm' + msg + '\x1b[' + close + 'm'
+    return _format(msg, open, close)
 }
 
 pub fn bg_black(msg string) string {
