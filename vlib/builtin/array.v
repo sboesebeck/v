@@ -220,6 +220,18 @@ pub fn (a []int) str() string {
 	return res
 }
 
+pub fn (a []u64) str() string {
+	mut res := '['
+	for i := 0; i < a.len; i++ {
+		val := a[i]
+		res += '$val'
+		if i < a.len - 1 {
+			res += ', '
+		}
+	}
+	res += ']'
+	return res
+}
 //pub fn (a []int) free() {
 pub fn (a array) free() {
 	//if a.is_slice {
@@ -247,7 +259,7 @@ pub fn (b []byte) hex() string {
 	mut hex := malloc(b.len*2+1)
 	mut ptr := &hex[0]
 	for i := 0; i < b.len ; i++ {
-		ptr += C.sprintf(ptr, '%02X', b[i])
+		ptr += C.sprintf(ptr, '%02x', b[i])
 	}
 	return string(hex)
 }

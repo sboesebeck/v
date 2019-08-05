@@ -399,6 +399,16 @@ pub fn (s string) index(p string) int {
 	return -1
 }
 
+pub fn (s string) index_any(chars string) int {
+	for c in chars {
+		index := s.index(c.str())
+		if index != -1 {
+			return index
+		}
+	}
+	return -1
+}
+
 pub fn (s string) last_index(p string) int {
 	if p.len > s.len {
 		return -1
@@ -442,6 +452,23 @@ pub fn (s string) index_after(p string, start int) int {
 		i++
 	}
 	return -1
+}
+
+// counts occurrences of substr in s
+pub fn (s string) count(substr string) int {
+	if s.len == 0 || substr.len == 0 {
+		return 0
+	}
+	mut n := 0
+	mut i := 0
+	for {
+		i = s.index_after(substr, i)
+		if i == -1 {
+			return n
+		}
+		i += substr.len
+		n++
+	}
 }
 
 pub fn (s string) contains(p string) bool {

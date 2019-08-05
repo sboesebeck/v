@@ -164,6 +164,11 @@ fn (p mut Parser) chash() {
 	}
 	if hash.starts_with('include') {
 		if p.first_pass() && !is_sig {
+			if p.file_pcguard.len != 0 {
+				//println('p: $p.file_platform $p.file_pcguard')
+				p.cgen.includes << '$p.file_pcguard\n#$hash\n#endif'
+				return
+			}
 			p.cgen.includes << '#$hash'
 			return
 		}
@@ -197,15 +202,24 @@ fn (p mut Parser) comptime_method_call(typ Type) {
 	p.cgen.cur_line = '' 
 	p.check(.dollar)
 	var := p.check_name() 
-	for method in typ.methods {
+	for i, method in typ.methods {
 		if method.typ != 'void' {
 			continue 
 		} 
 		receiver := method.args[0] 
 		amp := if receiver.is_mut { '&' } else { '' } 
+		if i > 0 { 
+			p.gen(' else ')
+		} 
 		p.gen('if ( string_eq($var, _STR("$method.name")) ) ${typ.name}_$method.name($amp $p.expr_var.name);') 
 	} 
 	p.check(.lpar) 
 	p.check(.rpar) 
+	if p.tok == .key_orelse {
+		p.check(.key_orelse) 
+		p.genln('else {') 
+		p.check(.lcbr)
+		p.statements() 
+	} 
 } 
 

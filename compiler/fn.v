@@ -354,9 +354,10 @@ fn (p mut Parser) fn_decl() {
 				if p.tok == .gt && p.prev_tok == .name  && p.prev_tok2 == .lt &&
 					p.scanner.text[p.scanner.pos-1] != `T` { 
 					p.scanner.pos -= 3 
-					for p.scanner.pos > 0 && is_name_char(p.scanner.text[p.scanner.pos]) || p.scanner.text[p.scanner.pos] == `.`  ||
-						p.scanner.text[p.scanner.pos] == `<` { 
-						p.scanner.pos-- 
+					for p.scanner.pos > 0 && (is_name_char(p.scanner.text[p.scanner.pos]) || 
+						p.scanner.text[p.scanner.pos] == `.`  ||
+						p.scanner.text[p.scanner.pos] == `<` ) { 
+						p.scanner.pos--  
 					} 
 					p.scanner.pos-- 
 					p.next() 
@@ -808,11 +809,13 @@ fn (p mut Parser) fn_call_args(f mut Fn) *Fn {
 		// (If we don't check for void, then V will compile `println(func())`) 
 		if i == 0 && f.name == 'println' && typ != 'string' && typ != 'void' {
 			T := p.table.find_type(typ)
-			fmt := p.typ_to_fmt(typ, 0) 
-			if fmt != '' { 
-				p.cgen.resetln(p.cgen.cur_line.replace('println (', '/*opt*/printf ("' + fmt + '\\n", '))
-				continue 
-			}  
+			$if !windows {
+				fmt := p.typ_to_fmt(typ, 0)
+				if fmt != '' {
+					p.cgen.resetln(p.cgen.cur_line.replace('println (', '/*opt*/printf ("' + fmt + '\\n", '))
+					continue 
+				}
+			}
 			if typ.ends_with('*') {
 				p.cgen.set_placeholder(ph, 'ptr_str(')
 				p.gen(')')
@@ -911,17 +914,6 @@ fn (p mut Parser) fn_call_args(f mut Fn) *Fn {
 	}
 	p.check(.rpar)
 	// p.gen(')')
-}
-
-fn contains_capital(s string) bool {
-	// for c in s {
-	for i := 0; i < s.len; i++ {
-		c := s[i]
-		if c >= `A` && c <= `Z` {
-			return true
-		}
-	}
-	return false
 }
 
 // "fn (int, string) int"

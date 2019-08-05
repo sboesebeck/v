@@ -282,7 +282,7 @@ fn (s mut Scanner) scan() ScanRes {
 		return scan_res(.name, name)
 	}
 	// `123`, `.123`
-	else if c.is_digit() || c == `.` && nextc.is_digit() {
+	else if c.is_digit() || (c == `.` && nextc.is_digit()) {
 		num := s.ident_number()
 		return scan_res(.number, num)
 	}
@@ -550,8 +550,7 @@ fn (s mut Scanner) scan() ScanRes {
 
 fn (s &Scanner) error(msg string) {
 	file := s.file_path.all_after('/')
-	println('panic: $file:${s.line_nr + 1}')
-	println(msg)
+	println('$file:${s.line_nr + 1} panic: $msg')
 	exit(1)
 }
 
@@ -758,4 +757,30 @@ fn (s mut Scanner) create_type_string(T Type, name string) {
 	s.line_nr = line
 	s.inside_string = inside_string
 }
+
+fn contains_capital(s string) bool {
+	// for c in s {
+	for i := 0; i < s.len; i++ {
+		c := s[i]
+		if c >= `A` && c <= `Z` {
+			return true
+		}
+	}
+	return false
+}
+
+// HTTPRequest  bad
+// HttpRequest  good 
+fn good_type_name(s string) bool {
+	if s.len < 4 {
+		return true 
+	} 
+	for i in 2 .. s.len { 
+		if s[i].is_capital() && s[i-1].is_capital() && s[i-2].is_capital() {
+			return false 
+		} 
+	} 
+	return true 
+} 
+
 

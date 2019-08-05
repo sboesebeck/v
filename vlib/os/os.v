@@ -162,29 +162,42 @@ pub fn mv(old, new string) {
 // TODO return `?[]string` TODO implement `?[]` support
 pub fn read_lines(path string) []string {
 	mut res := []string
-	mut buf := [1000]byte
+	mut buf_len := 1024
+	mut buf := malloc(buf_len)
+
 	mode := 'rb'
 	mut fp := &C.FILE{}
 	$if windows {
 		fp = C._wfopen(path.to_wide(), mode.to_wide())
 	} $else {
-		cpath := path.str
-		fp = C.fopen(cpath, mode.str) 
+		fp = C.fopen(path.str, mode.str) 
 	}
 	if isnil(fp) {
 		// TODO
 		// return error('failed to open file "$path"')
 		return res
 	}
-	for C.fgets(buf, 1000, fp) != 0 {
-		mut val := ''
-		buf[C.strlen(buf) - 1] = `\0` // eat the newline fgets() stores
-		$if windows {
-			if buf[strlen(buf)-2] == 13 {
-				buf[strlen(buf) - 2] = `\0`
+
+	mut buf_index := 0
+	for C.fgets(buf + buf_index, buf_len - buf_index, fp) != 0 {
+		len := C.strlen(buf)
+		if len == buf_len - 1 && buf[len - 1] != 10 {
+			buf_len *= 2
+			buf = C.realloc(buf, buf_len)
+			if isnil(buf) {
+				panic('Could not reallocate the read buffer')
 			}
+			buf_index = len
+			continue
+		}
+		if buf[len - 1] == 10 || buf[len - 1] == 13 {
+			buf[len - 1] = `\0`
+		}
+		if len > 1 && buf[len - 2] == 13 {
+			buf[len - 2] = `\0`
 		}
 		res << tos_clone(buf)
+		buf_index = 0
 	}
 	C.fclose(fp)
 	return res
@@ -470,6 +483,9 @@ pub fn ext(path string) string {
 
 // dir returns all but the last element of path, typically the path's directory.  
 pub fn dir(path string) string {
+	if path == '.' {
+		return getwd() 
+	} 
 	mut pos := -1
 	// TODO PathSeparator defined in os_win.v doesn't work when building V, 
 	// because v.c is generated for a nix system. 
@@ -676,9 +692,9 @@ pub fn executable() string {
 	}
 	$if freebsd {
 		mut result := malloc(MAX_PATH)
-		mut mib := [1 /* CTL_KERN */, 14 /* KERN_PROC */, 12 /* KERN_PROC_PATHNAME */, -1]!! 
+		mib := [1 /* CTL_KERN */, 14 /* KERN_PROC */, 12 /* KERN_PROC_PATHNAME */, -1] 
 		size := MAX_PATH 
-		C.sysctl(mib, 4, result, &size, 0, 0) 
+		C.sysctl(mib.data, 4, result, &size, 0, 0) 
 		return string(result) 
 	} 
 	$if openbsd {
@@ -718,7 +734,8 @@ pub fn is_dir(path string) bool {
 		if C.stat(cstr, &statbuf) != 0 {
 			return false
 		}
-		return statbuf.st_mode & S_IFMT == S_IFDIR
+		// ref: https://code.woboq.org/gcc/include/sys/stat.h.html
+		return (statbuf.st_mode & S_IFMT) == S_IFDIR
 	} 
 }
 
