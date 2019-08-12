@@ -336,21 +336,33 @@ fn popen(path string) *FILE {
 	}
 }
 
+fn pclose(f *FILE) int {
+	$if windows {
+		return C._pclose(f)
+	}
+	$else {
+		return C.pclose(f)
+	}
+}
+
 // exec starts the specified command, waits for it to complete, and returns its output.
-pub fn exec(_cmd string) string {
+pub fn exec(_cmd string) ?string {
 	cmd := '$_cmd 2>&1'
 	f := popen(cmd)
 	if isnil(f) {
-		// TODO optional or error code 
-		println('popen $cmd failed')
-		return '' 
+		return error('popen $cmd failed')
 	}
 	buf := [1000]byte 
 	mut res := ''
 	for C.fgets(buf, 1000, f) != 0 { 
 		res += tos(buf, strlen(buf)) 
 	}
-	return res.trim_space()
+	res = res.trim_space()
+	status_code := pclose(f)/256
+	if status_code != 0 {
+		return error(res)
+	}
+	return res
 }
 
 // `getenv` returns the value of the environment variable named by the key.
@@ -858,6 +870,7 @@ pub fn fork() int {
 		pid := C.fork()
 		return pid
 	}
+	panic('os.fork not supported in windows') // TODO
 }
 
 pub fn wait() int {
@@ -865,6 +878,7 @@ pub fn wait() int {
 		pid := C.wait(0)
 		return pid
 	}
+	panic('os.wait not supported in windows') // TODO
 }
 
 pub fn file_last_mod_unix(path string) int {

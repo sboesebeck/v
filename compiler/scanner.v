@@ -33,7 +33,6 @@ fn new_scanner(file_path string) *Scanner {
 
 	mut raw_text := os.read_file(file_path) or {
 		panic('scanner: failed to open "$file_path"')
-		return &Scanner{}
 	}
 
 	// BOM check
@@ -438,6 +437,22 @@ fn (s mut Scanner) scan() ScanRes {
 		else {
 			return scan_res(.gt, '')
 		}
+	case 0xE2:
+		//case `≠`:
+		if nextc == 0x89 && s.text[s.pos + 2] == 0xA0 {
+			s.pos += 2
+			return scan_res(.ne, '')
+		}
+		// ⩽
+		else if nextc == 0x89 && s.text[s.pos + 2] == 0xBD {
+			s.pos += 2
+			return scan_res(.le, '')
+		}
+		// ⩾
+		else if nextc == 0xA9 && s.text[s.pos + 2] == 0xBE {
+			s.pos += 2
+			return scan_res(.ge, '')
+		}
 	case `<`:
 		if nextc == `=` {
 			s.pos++
@@ -550,7 +565,7 @@ fn (s mut Scanner) scan() ScanRes {
 
 fn (s &Scanner) error(msg string) {
 	file := s.file_path.all_after('/')
-	println('$file:${s.line_nr + 1} panic: $msg')
+	println('$file:${s.line_nr + 1} $msg')
 	exit(1)
 }
 

@@ -60,6 +60,7 @@ mut:
 	// It allows having things like `fn (f Foo) bar()` before `Foo` is defined.
 	// This information is needed in the first pass.
 	is_placeholder bool
+	gen_str	       bool  // needs `.str()` method generation 
 }
 
 // For debugging types
@@ -242,7 +243,8 @@ fn (t mut Table) register_fn(new_fn Fn) {
 	t.fns[new_fn.name] = new_fn 
 }
 
-fn (table &Table) known_type(typ string) bool {
+fn (table &Table) known_type(typ_ string) bool {
+	mut typ := typ_ 
 	// 'byte*' => look up 'byte', but don't mess up fns
 	if typ.ends_with('*') && !typ.contains(' ') {
 		typ = typ.left(typ.len - 1)
@@ -433,7 +435,7 @@ fn (t mut Type) add_gen_type(type_name string) {
 }
 */ 
 
-fn (p &Parser) find_type(name string) *Type {
+fn (p &Parser) find_type(name string) &Type {
 	typ := p.table.find_type(name)
 	if typ.name.len == 0 {
 		return p.table.find_type(p.prepend_mod(name))
@@ -441,7 +443,8 @@ fn (p &Parser) find_type(name string) *Type {
 	return typ
 }
 
-fn (t &Table) find_type(name string) *Type {
+fn (t &Table) find_type(name_ string) *Type {
+	mut name := name_ 
 	if name.ends_with('*') && !name.contains(' ') {
 		name = name.left(name.len - 1)
 	}
@@ -454,7 +457,9 @@ fn (t &Table) find_type(name string) *Type {
 	return &Type{}
 }
 
-fn (p mut Parser) _check_types(got, expected string, throw bool) bool {
+fn (p mut Parser) _check_types(got_, expected_ string, throw bool) bool {
+	mut got := got_ 
+	mut expected := expected_ 
 	p.log('check types got="$got" exp="$expected"  ')
 	if p.pref.translated {
 		return true
@@ -582,8 +587,7 @@ fn (p mut Parser) satisfies_interface(interface_name, _typ string, throw bool) b
 
 fn type_default(typ string) string {
 	if typ.starts_with('array_') {
-		typ = typ.right(6)
-		return 'new_array(0, 1, sizeof($typ))'
+		return 'new_array(0, 1, sizeof( ${typ.right(6)} ))'
 	}
 	// Always set pointers to 0
 	if typ.ends_with('*') {
@@ -736,6 +740,7 @@ fn (t mut Table) fn_gen_types(fn_name string) []string {
 			return f.types
 		} 
 	} 
+	panic('function $fn_name not found')
 } 
 
 // `foo<Bar>()`
@@ -757,8 +762,9 @@ fn (p mut Parser) typ_to_fmt(typ string, level int) string {
 	}
 	switch typ {
 	case 'string': return '%.*s'
+	//case 'bool': return '%.*s'
 	case 'ustring': return '%.*s'
-	case 'byte', 'int', 'char', 'byte', 'bool', 'u32', 'i32', 'i16', 'u16', 'i8', 'u8': return '%d'
+	case 'byte', 'bool', 'int', 'char', 'byte', 'u32', 'i32', 'i16', 'u16', 'i8', 'u8': return '%d'
 	case 'f64', 'f32': return '%f'
 	case 'i64', 'u64': return '%lld'
 	case 'byte*', 'byteptr': return '%s'
@@ -776,8 +782,8 @@ fn (p mut Parser) typ_to_fmt(typ string, level int) string {
 	return ''
 }
 
-fn is_compile_time_const(s string) bool {
-	s = s.trim_space()
+fn is_compile_time_const(s_ string) bool {
+	s := s_.trim_space()
 	if s == '' {
 		return false
 	}
@@ -825,7 +831,6 @@ fn (fit mut FileImportTable) register_import(mod string) {
 fn (fit mut FileImportTable) register_alias(alias string, mod string) {
 	if alias in fit.imports { 
 		panic('cannot import $mod as $alias: import name $alias already in use in "${fit.file_path}".')
-		return 
 	}
 	if mod.contains('.internal.') {
 		mod_parts := mod.split('.')

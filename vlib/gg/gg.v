@@ -5,7 +5,7 @@
 module gg
 
 import stbi
-import glm
+import glm 
 import gl
 import gx
 import os
@@ -27,8 +27,8 @@ import const (
 
 pub fn vec2(x, y int) Vec2 {
 	res := Vec2 {
-		x: x,
-		y: y,
+		x: x 
+		y: y 
 	}
 	return res
 }
@@ -48,10 +48,12 @@ pub:
 	retina    bool
 	 
 	font_size int
+	font_path string
 	create_window bool 
 	window_user_ptr voidptr 
 	window_title string 
 	always_on_top bool 
+	scale int 
 }
 
 struct GG {
@@ -272,7 +274,7 @@ pub fn (ctx &GG) draw_rect2(x, y, w, h f32, c gx.Color) {
 fn todo_remove_me(cfg Cfg, scale int) { 
 	// Can only have text in ortho mode
 	if !cfg.use_ortho {
-		return &GG{} 
+		return
 	}
 	mut width := cfg.width * scale
 	mut height := cfg.height * scale
@@ -310,10 +312,6 @@ fn (c GG) fill_color(color gx.Color) {
 
 fn (c GG) fill() {
 }
-
-pub fn (ctx &GG) draw_text(_x, _y int, text string, cfg gx.TextCfg) {
-//pub fn (c &GG) draw_text(x, y int) {
-} 
 
 fn (c GG) move_to(x, y int) {
 }

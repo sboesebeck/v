@@ -28,37 +28,40 @@ const (
 	KEY_ENUMERATE_SUB_KEYS = (0x0008)
 )
 
-// Given a root key look for the subkey 'version' and get the path 
-fn find_windows_kit_internal(key RegKey, version string) ?string {
-	required_bytes := 0 // TODO mut 
-	result := C.RegQueryValueExW(key, version.to_wide(), 0, 0, 0, &required_bytes)
+// Given a root key look for one of the subkeys in 'versions' and get the path 
+fn find_windows_kit_internal(key RegKey, versions []string) ?string {
+	for version in versions {
+		required_bytes := 0 // TODO mut 
+		result := C.RegQueryValueExW(key, version.to_wide(), 0, 0, 0, &required_bytes)
 
-	length := required_bytes / 2
+		length := required_bytes / 2
 
-	if result != 0 {
-		return error('')
+		if result != 0 {
+			continue
+		}
+
+		alloc_length := (required_bytes + 2)
+
+		mut value := &u16(malloc(alloc_length))
+		if !value {
+			continue
+		}
+
+		result2 := C.RegQueryValueExW(key, version.to_wide(), 0, 0, value, &alloc_length)
+
+		if result2 != 0 {
+			continue
+		}
+
+		// We might need to manually null terminate this thing
+		// So just make sure that we do that
+		if (value[length - 1] != u16(0)) {
+			value[length] = u16(0)
+		}
+
+		return string_from_wide(value)
 	}
-
-	alloc_length := (required_bytes + 2)
-
-	mut value := &u16(malloc(alloc_length))
-	if !value {
-		return error('')
-	}
-
-	result2 := C.RegQueryValueExW(key, version.to_wide(), 0, 0, value, &alloc_length)
-
-	if result2 != 0 {
-		return error('')
-	}
-
-	// We might need to manually null terminate this thing
-	// So just make sure that we do that
-	if (value[length - 1] != u16(0)) {
-		value[length] = u16(0)
-	}
-
-	return string_from_wide(value)
+	return error('windows kit not found')
 }
 
 struct WindowsKit {
@@ -82,13 +85,8 @@ fn find_windows_kit_root() ?WindowsKit {
 		return error('Unable to open root key')
 	}
 	// Try and find win10 kit
-	kit_root := find_windows_kit_internal(root_key, 'KitsRoot10') or {
-		// Fallback to windows 8
-		k := find_windows_kit_internal(root_key, 'KitsRoot81') or {
-			println('Unable to find windows sdk')
-			return error('Unable to find a windows kit')
-		}
-		k
+	kit_root := find_windows_kit_internal(root_key, ['KitsRoot10', 'KitsRoot81']) or {
+		return error('Unable to find a windows kit')
 	}
 
 	kit_lib := kit_root + 'Lib'
@@ -134,7 +132,9 @@ fn find_vs() ?VsInstallation {
 	// VSWhere is guaranteed to be installed at this location now
 	// If its not there then end user needs to update their visual studio 
 	// installation!
-	res := os.exec('""%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"')
+	res := os.exec('""%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"') or {
+		return error(err)
+	}
 	// println('res: "$res"')
 
 	version := os.read_file('$res\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt') or {
@@ -196,7 +196,7 @@ fn find_msvc() ?MsvcResult {
 	}
 }
 
-pub fn cc_msvc(v *V) {
+pub fn (v mut V) cc_msvc() { 
 	r := find_msvc() or {
 		println('Could not find MSVC')
 		
@@ -341,13 +341,12 @@ pub fn cc_msvc(v *V) {
 
 	// println('$cmd')
 
-	res := os.exec(cmd)
-	// println(res)
-	// println('C OUTPUT:')
-	if res.contains('error') {
-		println(res)
+	_ := os.exec(cmd) or {
+		println(err)
 		panic('msvc error')
 	}
+	// println(res)
+	// println('C OUTPUT:')
 
 	if !v.pref.is_debug && v.out_name_c != 'v.c' && v.out_name_c != 'v_macos.c' {
 		os.rm('.$v.out_name_c') 
@@ -386,7 +385,9 @@ fn build_thirdparty_obj_file_with_msvc(flag string) {
 
 	println('$cfiles')
 
-	res := os.exec('""$msvc.exe_path\\cl.exe" /volatile:ms /Z7 $include_string /c $cfiles /Fo"$obj_path" /D_UNICODE /DUNICODE"')
+	res := os.exec('""$msvc.exe_path\\cl.exe" /volatile:ms /Z7 $include_string /c $cfiles /Fo"$obj_path" /D_UNICODE /DUNICODE"') or {
+		panic(err)
+	}
 	println(res)
 } 
 
