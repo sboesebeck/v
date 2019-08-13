@@ -3,7 +3,7 @@ CFLAGS ?= -O2 -fPIC
 PREFIX ?= /usr/local
 VC ?= 0.1.17
 
-all: v tools/vget
+all: v
 	$(info V has been successfully built)
 
 v: v.c.out compiler/*.v vlib/**/*.v
@@ -50,7 +50,7 @@ release: clean v-release thirdparty-release
 
 install: uninstall all
 	mkdir -p ${PREFIX}/lib/vlang ${PREFIX}/bin
-	cp -r {v,tools,vlib,thirdparty} ${PREFIX}/lib/vlang
+	cp -r v tools vlib thirdparty ${PREFIX}/lib/vlang
 	ln -sf ${PREFIX}/lib/vlang/v ${PREFIX}/bin/v
 	ln -sf ${PREFIX}/lib/vlang/tools/vget ${PREFIX}/bin/vget
 
@@ -59,4 +59,3 @@ uninstall:
 
 symlink: v tools/vget
 	ln -sf `pwd`/v ${PREFIX}/bin/v
-	ln -sf `pwd`/tools/vget ${PREFIX}/bin/vget

@@ -1102,7 +1102,7 @@ fn (p mut Parser) vh_genln(s string) {
 }
 
 fn (p mut Parser) statement(add_semi bool) string {
-	if p.returns { //&& !p.is_vweb {
+	if p.returns && !p.is_vweb {
 		p.error('unreachable code')
 	}
 	p.cgen.is_tmp = false
@@ -1251,8 +1251,9 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 		println('allowing option asss')
 		expr := p.cgen.cur_line.right(pos)
 		left := p.cgen.cur_line.left(pos)
+		typ := expr_type.replace('Option_', '') 
 		//p.cgen.cur_line = left + 'opt_ok($expr)'
-		p.cgen.resetln(left + 'opt_ok($expr, sizeof($expr_type))')
+		p.cgen.resetln(left + 'opt_ok($expr, sizeof($typ))')
 	}
 	else if !p.builtin_mod && !p.check_types_no_throw(expr_type, p.assigned_type) {
 		p.scanner.line_nr--
@@ -1703,10 +1704,10 @@ fn (p mut Parser) var_expr(v Var) string {
 			p.next() 
 			return p.select_query(fn_ph) 
 		} 
-		if typ == 'pg__DB' && !p.fileis('pg.v') {
+		if typ == 'pg__DB' && !p.fileis('pg.v') && p.peek() == .name {
 			p.next() 
-			 p.insert_query(fn_ph) 
-return 'void' 
+			p.insert_query(fn_ph) 
+			return 'void' 
 		} 
 		// println('dot #$dc')
 		typ = p.dot(typ, fn_ph)
@@ -1962,7 +1963,8 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 		// expression inside [ ]
 		if is_arr {
 			T := p.table.find_type(p.expression())
-			if T.parent != 'int' {
+			// Allows only i8-64 and u8-64 to be used when accessing an array
+			if T.parent != 'int' && T.parent != 'u32' {
 				p.check_types(T.name, 'int')
 			}
 		}
@@ -3314,10 +3316,10 @@ fn (p mut Parser) return_st() {
 			if p.cur_fn.typ.ends_with(expr_type) && p.cur_fn.typ.starts_with('Option_') {
 				tmp := p.get_tmp()
 				ret := p.cgen.cur_line.right(ph)
-
-				p.cgen.cur_line = '$expr_type $tmp = OPTION_CAST($expr_type)($ret);'
+				typ := expr_type.replace('Option_', '') 
+				p.cgen.cur_line = '$expr_type $tmp = OPTION_CAST($typ)($ret);'
 				p.cgen.resetln('$expr_type $tmp = OPTION_CAST($expr_type)($ret);')
-				p.gen('return opt_ok(&$tmp, sizeof($expr_type))')
+				p.gen('return opt_ok(&$tmp, sizeof($typ))')
 			}
 			else {
 				ret := p.cgen.cur_line.right(ph)
