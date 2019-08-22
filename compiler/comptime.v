@@ -248,10 +248,14 @@ fn (p mut Parser) gen_array_str(typ mut Type) {
 		typ: 'string'
 		args: [Var{typ: typ.name, is_arg:true}] 
 		is_method: true 
+		is_public: true
 		receiver_typ: typ.name 
 	}) 
 	t := typ.name 
 	elm_type := t.right(6) 
+	if p.typ_to_fmt(elm_type, 0) == '' && !p.table.type_has_method(p.table.find_type(elm_type), 'str') {
+		p.error('cant print ${elm_type}[], unhandled print of ${elm_type}')
+	}
 	p.cgen.fns << '
 string ${t}_str($t a) {
 	strings__Builder sb = strings__new_builder(a.len * 3); 

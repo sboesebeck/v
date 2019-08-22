@@ -13,6 +13,8 @@ import const (
 	AF_INET6
 	AF_UNSPEC
 	SOCK_STREAM
+	SOCK_DGRAM
+	IPPROTO_UDP
 	SOL_SOCKET
 	SO_REUSEADDR
 	SO_REUSEPORT
@@ -95,6 +97,10 @@ pub fn socket(family int, _type int, proto int) ?Socket {
 	return s
 }
 
+pub fn socket_udp() ?Socket {
+	return socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+}
+
 // set socket options
 pub fn (s Socket) setsockopt(level int, optname int, optvalue *int) ?int {
 	res := C.setsockopt(s.sockfd, level, optname, optvalue, C.sizeof(optvalue))
@@ -111,11 +117,11 @@ pub fn (s Socket) bind(port int) ?int {
 	addr.sin_port = C.htons(port)
 	addr.sin_addr.s_addr = C.htonl(INADDR_ANY)
 	size := 16 // sizeof(C.sockaddr_in)
-	res := C.bind(s.sockfd, &addr, size)
+	res := int(C.bind(s.sockfd, &addr, size))
 	if res < 0 {
 		return error('socket: bind failed')
 	}
-	return int(res)
+	return res
 }
 
 // put socket into passive mode and wait to receive
@@ -229,6 +235,16 @@ pub fn (s Socket) recv(bufsize int) byteptr {
 //		return error('socket: recv failed')
 //	}
 	return buf
+}
+
+// TODO: remove cread/2 and crecv/2 when the Go net interface is done
+pub fn (s Socket) cread( buffer byteptr, buffersize int ) int {
+	return int( C.read(s.sockfd, buffer, buffersize) )
+}
+// Receive a message from the socket, and place it in a preallocated buffer buf,
+// with maximum message size bufsize. Returns the length of the received message.
+pub fn (s Socket) crecv( buffer byteptr, buffersize int ) int {
+	return int( C.recv(s.sockfd, buffer, buffersize, 0) )
 }
 
 // shutdown and close socket

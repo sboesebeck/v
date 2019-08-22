@@ -84,7 +84,8 @@ mut:
 	is_vweb bool
 	is_sql bool
 	sql_i int  // $1 $2 $3
-	sql_params string // ("select * from users where id = $1", ***"100"***)
+	sql_params []string // ("select * from users where id = $1", ***"100"***)
+	sql_types []string // int, string and so on; see sql_params
 }
 
 const (
@@ -1400,8 +1401,10 @@ fn (p mut Parser) bterm() string {
 			p.gen('$' + p.sql_i.str())
 			p.cgen.start_cut()
 			p.check_types(p.expression(), typ)
-			p.sql_params = p.sql_params + p.cgen.cut() + ','
-			//println('sql params = "$p.sql_params"')
+			sql_param := p.cgen.cut()
+			p.sql_params << sql_param
+			p.sql_types  << typ
+			//println('*** sql type: $typ | param: $sql_param')
 		}  else {
 			p.check_types(p.expression(), typ)
 		}
@@ -1997,6 +2000,7 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 			p.error('strings are immutable')
 		}
 		assign_pos := p.cgen.cur_line.len
+		is_cao := p.tok != .assign
 		p.assigned_type = typ
 		p.expected_type = typ
 		p.assign_statement(v, fn_ph, is_indexer && (is_map || is_arr))
@@ -2010,19 +2014,33 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 			tmp_val := p.cgen.cur_line.right(assign_pos)
 			p.cgen.resetln(p.cgen.cur_line.left(assign_pos))
 			// val := p.cgen.end_tmp()
+			mut cao_tmp := p.cgen.cur_line
 			if is_map {
 				p.cgen.set_placeholder(fn_ph, 'map__set(&')
+				// CAO on map is a bit more complicated as it loads
+				// the value inside a pointer instead of returning it.
 			}
 			else {
 				if is_ptr {
 					p.cgen.set_placeholder(fn_ph, 'array_set(')
+					if is_cao {
+						cao_tmp = '*($p.expected_type *) array__get(*$cao_tmp)'
+					}
 				}
 				else {
 					p.cgen.set_placeholder(fn_ph, 'array_set(&/*q*/')
+					if is_cao {
+						cao_tmp = '*($p.expected_type *) array__get($cao_tmp)'
+					}
 				}
 			}
 			p.gen(', & $tmp)')
-			p.cgen.insert_before('$typ $tmp = $tmp_val;')
+			if !is_cao {
+				p.cgen.insert_before('$typ $tmp = $tmp_val;')
+			}
+			else {
+				p.cgen.insert_before('$typ $tmp = $cao_tmp ' + tmp_val.all_before('=') + tmp_val.all_after('=') + ';')
+			}
 		}
 		return typ
 	}
@@ -2529,7 +2547,18 @@ fn (p mut Parser) string_expr() {
 		else {
 			f := p.typ_to_fmt(typ, 0)
 			if f == '' {
-				p.error('unhandled sprintf format "$typ" ')
+				is_array := typ.starts_with('array_')
+				has_str_method := p.table.type_has_method(p.table.find_type(typ), 'str')
+				if is_array || has_str_method {
+					if is_array && !has_str_method {
+						p.gen_array_str(mut p.table.find_type(typ))
+					}
+					args = args.all_before_last(val) + '${typ}_str(${val}).len, ${typ}_str(${val}).str'
+					format += '%.*s '
+				}
+				else {
+					p.error('unhandled sprintf format "$typ" ')
+				}
 			}
 			format += f
 		}
