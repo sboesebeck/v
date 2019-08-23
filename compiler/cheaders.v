@@ -11,9 +11,7 @@ CommonCHeaders = '
 #include <inttypes.h>  // int64_t etc
 #include <string.h> // memcpy
 
-#define STRUCT_DEFAULT_VALUE {}
 #define EMPTY_STRUCT_DECLARATION
-#define EMPTY_STRUCT_INIT
 #define OPTION_CAST(x) (x)
 
 #ifdef _WIN32
@@ -31,13 +29,9 @@ CommonCHeaders = '
 // On MSVC these are the same (as long as /volatile:ms is passed)
 #define _Atomic volatile
 
-// MSVC can\'t parse some things properly
-#undef STRUCT_DEFAULT_VALUE
-#define STRUCT_DEFAULT_VALUE {0}
+// MSVC cannot parse some things properly
 #undef EMPTY_STRUCT_DECLARATION
 #define EMPTY_STRUCT_DECLARATION void *____dummy_variable;
-#undef EMPTY_STRUCT_INIT
-#define EMPTY_STRUCT_INIT 0
 #undef OPTION_CAST
 #define OPTION_CAST(x)
 #endif
