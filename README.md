@@ -30,18 +30,6 @@ Installing V: https://github.com/vlang/v#installing-v-from-source
 
 V 1.0 release is planned for December 2019. Right now V is in an alpha stage.
 
-## Notes
-
-The compilation is temporarily slower for this release:
-
-- Debug builds are used (use `./v -prod -o v compiler` to get faster compilation).
-- vlib is recompiled with every program you build.
-- The new formatter runs on every single token and slows the compiler down by ~20%. This will be taken care of.
-
-
-
-
-
 ## Installing V from source
 
 ### Linux, macOS, Windows, *BSD, WSL, Android, Raspbian
@@ -55,17 +43,25 @@ make
 
 That's it! Now you have a V executable at `[path to V repo]/v`. `[path to V repo]` can be anywhere.
 
+V is being constantly updated. To update V, simply run
+
+```
+v up
+```
+
 
 ### C compiler
 
-You'll need Clang or GCC. If you are doing development, you most likely already have it installed.
+You'll need Clang or GCC or Visual Studio. If you are doing development, you most likely already have one of those installed.
 
 On macOS run `xcode-select --install` if you don't have XCode or XCode tools.
+
+On Debian/Ubuntu run `sudo apt install build-essential`.
 
 On Windows follow these instructions: [github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows)
 
 
-### Symlinking and updates
+### Symlinking
 
 You can create a `/usr/local/bin/v` symlink so that V is globally available:
 
@@ -73,11 +69,6 @@ You can create a `/usr/local/bin/v` symlink so that V is globally available:
 sudo v symlink
 ```
 
-V is being constantly updated. To update V, simply run
-
-```
-v up
-```
 
 ### Docker
 

@@ -14,6 +14,8 @@ CommonCHeaders = '
 #ifndef _WIN32
 #include <ctype.h>
 #include <locale.h> // tolower
+#include <sys/time.h>
+#include <unistd.h> // sleep	
 #endif
 
 #ifdef __APPLE__
@@ -23,6 +25,8 @@ CommonCHeaders = '
 
 #ifdef __linux__
 #include <execinfo.h> // backtrace and backtrace_symbols_fd
+#pragma weak backtrace
+#pragma weak backtrace_symbols_fd
 #endif
 
 #ifdef __linux__
@@ -111,7 +115,6 @@ typedef map map_string;
 //#define ALLOC_INIT(type, ...) (type *)memdup((type[]){ __VA_ARGS__ }, sizeof(type))
 
 //================================== GLOBALS =================================*/
-//int V_ZERO = 0;
 byteptr g_str_buf;
 int load_so(byteptr);
 void reload_so();

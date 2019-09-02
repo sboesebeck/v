@@ -4,9 +4,11 @@
 
 module main
 
-import os
-import time
-import strings
+import (
+	os
+	time
+	strings
+)
 
 const (
 	Version = '0.1.18'
@@ -60,9 +62,9 @@ mut:
 	out_name_c string // name of the temporary C file
 	files      []string // all V files that need to be parsed and compiled
 	dir        string // directory (or file) being compiled (TODO rename to path?)
-	table      *Table // table with types, vars, functions etc
-	cgen       *CGen // C code generator
-	pref       *Preferences // all the prefrences and settings extracted to a struct for reusability
+	table      &Table // table with types, vars, functions etc
+	cgen       &CGen // C code generator
+	pref       &Preferences // all the prefrences and settings extracted to a struct for reusability
 	lang_dir   string // "~/code/v"
 	out_name   string // "program.exe"
 	vroot      string
@@ -143,17 +145,21 @@ fn main() {
 			//println('Building vget...')
 			os.chdir(vroot + '/tools')
 			vgetcompilation := os.exec('$vexec -o $vget vget.v') or {
-				panic(err)
+				cerror(err)
+				return
 			}
 			if vgetcompilation.exit_code != 0 {
-				panic( vgetcompilation.output )
+				cerror( vgetcompilation.output )
+				return
 			}
 		}
 		vgetresult := os.exec('$vget ' + names.join(' ')) or {
-			panic(err)
+			cerror(err)
+			return
 		}
 		if vgetresult.exit_code != 0 {
-			panic( vgetresult.output )
+			cerror( vgetresult.output )
+			return
 		}
 		return
 	}
@@ -221,7 +227,7 @@ fn main() {
 fn (v mut V) compile() {
 	// Emily: Stop people on linux from being able to build with msvc
 	if os.user_os() != 'windows' && v.os == .msvc {
-		panic('Cannot build with msvc on ${os.user_os()}')
+		cerror('Cannot build with msvc on ${os.user_os()}')
 	}
 
 	mut cgen := v.cgen
@@ -255,12 +261,6 @@ fn (v mut V) compile() {
 	if v.os == .mac && ((v.pref.build_mode == .embed_vlib && v.table.imports.contains('ui')) ||
 	(v.pref.build_mode == .build && v.dir.contains('/ui'))) {
 		cgen.genln('id defaultFont = 0; // main.v')
-	}
-	// TODO remove ugly .c include once V has its own json parser
-	// Embed cjson either in embedvlib or in json.o
-	if (imports_json && v.pref.build_mode == .embed_vlib) ||
-	(v.pref.build_mode == .build && v.out_name.contains('json.o')) {
-		//cgen.genln('#include "cJSON.c" ')
 	}
 	// We need the cjson header for all the json decoding user will do in default mode
 	if v.pref.build_mode == .default_mode {
@@ -300,7 +300,7 @@ fn (v mut V) compile() {
 	mut d := strings.new_builder(10000)// Avoid unnecessary allocations
 	d.writeln(cgen.includes.join_lines())
 	d.writeln(cgen.typedefs.join_lines())
-	d.writeln(cgen.types.join_lines())
+	d.writeln(v.c_type_definitions())
 	d.writeln('\nstring _STR(const char*, ...);\n')
 	d.writeln('\nstring _STR_TMP(const char*, ...);\n')
 	d.writeln(cgen.fns.join_lines())
@@ -311,7 +311,7 @@ fn (v mut V) compile() {
 		d.writeln(v.prof_counters())
 	}
 	dd := d.str()
-	cgen.lines.set(defs_pos, dd)// TODO `def.str()` doesn't compile
+	cgen.lines[defs_pos] = dd// TODO `def.str()` doesn't compile
 
   v.generate_main()
 
@@ -456,9 +456,9 @@ fn (v V) run_compiled_executable_and_exit() {
 fn (v &V) v_files_from_dir(dir string) []string {
 	mut res := []string
 	if !os.file_exists(dir) {
-		panic('$dir doesn\'t exist')
+		cerror('$dir doesn\'t exist')
 	} else if !os.dir_exists(dir) {
-		panic('$dir isn\'t a directory')
+		cerror('$dir isn\'t a directory')
 	}
 	mut files := os.ls(dir)
 	if v.pref.is_verbose {
@@ -546,7 +546,7 @@ fn (v mut V) add_v_files_to_compile() {
 			import_path := '$ModPath/vlib/$mod_path'
 			vfiles := v.v_files_from_dir(import_path)
 			if vfiles.len == 0 {
-				panic('cannot import module $mod (no .v files in "$import_path").')
+				cerror('cannot import module $mod (no .v files in "$import_path").')
 			}
 			// Add all imports referenced by these libs
 			for file in vfiles {
@@ -564,7 +564,7 @@ fn (v mut V) add_v_files_to_compile() {
 		import_path := v.find_module_path(mod)
 		vfiles := v.v_files_from_dir(import_path)
 		if vfiles.len == 0 {
-			panic('cannot import module $mod (no .v files in "$import_path").')
+			cerror('cannot import module $mod (no .v files in "$import_path").')
 		}
 		// Add all imports referenced by these libs
 		for file in vfiles {
@@ -582,7 +582,7 @@ fn (v mut V) add_v_files_to_compile() {
 	deps_resolved := dep_graph.resolve()
 	if !deps_resolved.acyclic {
 		deps_resolved.display()
-		panic('Import cycle detected.')
+		cerror('Import cycle detected.')
 	}
 	// add imports in correct order
 	for mod in deps_resolved.imports() {
@@ -651,11 +651,11 @@ fn (v &V) log(s string) {
 	println(s)
 }
 
-fn new_v(args[]string) *V {
+fn new_v(args[]string) &V {
 	joined_args := args.join(' ')
 	target_os := get_arg(joined_args, 'os', '')
 	mut out_name := get_arg(joined_args, 'o', 'a.out')
-  
+
 	mut dir := args.last()
 	if args.contains('run') {
 		dir = get_all_after(joined_args, 'run', '')
@@ -812,7 +812,7 @@ fn new_v(args[]string) *V {
 	if pref.is_so {
 		out_name_c = out_name.all_after('/') + '_shared_lib.c'
 	}
-	return &V {
+	return &V{
 		os: _os
 		out_name: out_name
 		files: files
@@ -881,18 +881,21 @@ fn update_v() {
 	println('Updating V...')
 	vroot := os.dir(os.executable())
 	s := os.exec('git -C "$vroot" pull --rebase origin master') or {
-		panic(err)
+		cerror(err)
+		return
 	}
 	println(s.output)
 	$if windows {
 		os.mv('$vroot/v.exe', '$vroot/v_old.exe')
 		s2 := os.exec('$vroot/make.bat') or {
-			panic(err)
+			cerror(err)
+			return
 		}
 		println(s2.output)
 	} $else {
 		s2 := os.exec('make -C "$vroot"') or {
-			panic(err)
+			cerror(err)
+			return
 		}
 		println(s2.output)
 	}
@@ -906,7 +909,7 @@ fn test_v() {
 	mut joined_args := env_vflags_and_os_args().right(1).join(' ')
 	joined_args = joined_args.left(joined_args.last_index('test'))
 	println('$joined_args')
-
+	mut failed := false
 	test_files := os.walk_ext('.', '_test.v')
 	for dot_relative_file in test_files {
 		relative_file := dot_relative_file.replace('./', '')
@@ -914,11 +917,13 @@ fn test_v() {
 		tmpcfilepath := file.replace('_test.v', '_test.tmp.c')
 		print(relative_file + ' ')
 		r := os.exec('$vexe $joined_args -debug $file') or {
-			panic('failed on $file')
+			failed = true
+			println('FAIL')
+			continue
 		}
 		if r.exit_code != 0 {
-			println('failed `$file` (\n$r.output\n)')
-			exit(1)
+			println('FAIL `$file` (\n$r.output\n)')
+			failed = true
 		} else {
 			println('OK')
 		}
@@ -931,22 +936,37 @@ fn test_v() {
 		tmpcfilepath := file.replace('.v', '.tmp.c')
 		print(relative_file + ' ')
 		r := os.exec('$vexe $joined_args -debug $file') or {
-			panic('failed on $file')
+			failed = true
+			println('FAIL')
+			continue
 		}
 		if r.exit_code != 0 {
-			println('failed `$file` (\n$r.output\n)')
-			exit(1)
+			println('FAIL `$file` (\n$r.output\n)')
+			failed = true
 		} else {
 			println('OK')
 		}
-		os.rm( tmpcfilepath )
+		os.rm(tmpcfilepath)
+	}
+	if failed {
+		exit(1)
 	}
 }
 
 fn create_symlink() {
 	vexe := os.executable()
 	link_path := '/usr/local/bin/v'
-	os.system('ln -sf $vexe $link_path')
-	println('symlink "$link_path" has been created')
+	ret := os.system('ln -sf $vexe $link_path')
+	if ret == 0 {
+		println('symlink "$link_path" has been created')
+	} else {
+		println('failed to create symlink "$link_path", '+
+			'make sure you run with sudo')
+	}
 }
 
+pub fn cerror(s string) {
+	println('V error: $s')
+	os.flush_stdout()
+	exit(1)
+}
