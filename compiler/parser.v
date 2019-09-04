@@ -429,14 +429,19 @@ fn (p mut Parser) type_decl() {
 	if p.tok == .key_struct {
 		p.error('use `struct $name {` instead of `type $name struct {`')
 	}
-	parent := p.get_type()
-	nt_pair := p.table.cgen_name_type_pair(name, parent)
+	parent := p.get_type2()
+	nt_pair := p.table.cgen_name_type_pair(name, parent.name)
 	// TODO dirty C typedef hacks for DOOM
 	// Unknown type probably means it's a struct, and it's used before the struct is defined,
 	// so specify "struct"
-	_struct := if !parent.contains('[') && !parent.starts_with('fn ') && !p.table.known_type(parent){'struct'} else { ''}
-	p.gen_typedef('typedef $_struct $nt_pair; // type alias name="$name" parent="$parent"')
-	p.register_type_with_parent(name, parent)
+	_struct := if parent.cat != .array && parent.cat != .func &&
+		!p.table.known_type(parent.name) {
+		'struct'
+	} else {
+		''
+	}
+	p.gen_typedef('typedef $_struct $nt_pair; //type alias name="$name" parent=`$parent.name`')
+	p.register_type_with_parent(name, parent.name)
 }
 
 fn (p mut Parser) interface_method(field_name, receiver string) &Fn {
@@ -606,8 +611,11 @@ fn (p mut Parser) struct_decl() {
 		names << field_name
 		// We are in an interface?
 		// `run() string` => run is a method, not a struct field
-		if is_interface { //&& p.first_pass() {
-			p.table.add_method(typ.name, p.interface_method(field_name, name))
+		if is_interface {
+			f := p.interface_method(field_name, name)
+			if p.first_pass() {
+				p.table.add_method(typ.name, f)
+			}
 			continue
 		}
 		// `pub` access mod
@@ -632,6 +640,7 @@ fn (p mut Parser) struct_decl() {
 		if attr == 'raw' && field_type != 'string' {
 			p.error('struct field with attribute "raw" should be of type "string" but got "$field_type"')
 		}
+
 		did_gen_something = true
 		if p.first_pass() {
 			p.table.add_field(typ.name, field_name, field_type, is_mut, attr, access_mod)
@@ -639,6 +648,13 @@ fn (p mut Parser) struct_decl() {
 		p.fgenln('')
 	}
 	p.check(.rcbr)
+	if !is_c {
+		if !did_gen_something {
+			if p.first_pass() {
+				p.table.add_field(typ.name, '', 'EMPTY_STRUCT_DECLARATION', false, '', .private)
+			}
+		}
+	}
 	p.fgenln('\n')
 }
 
@@ -743,7 +759,7 @@ if p.scanner.line_comment != '' {
 }
 
 fn (p mut Parser) warn(s string) {
-	println('$p.scanner.file_path:${p.scanner.line_nr+1}: $s')
+	println('warning: $p.scanner.file_path:${p.scanner.line_nr+1}: $s')
 }
 
 fn (p mut Parser) error(s string) {
@@ -782,24 +798,17 @@ fn (p &Parser) first_pass() bool {
 
 // TODO return Type instead of string?
 fn (p mut Parser) get_type() string {
-	debug := p.fileis('fn_test') && false
 	mut mul := false
 	mut nr_muls := 0
 	mut typ := ''
 	// fn type
 	if p.tok == .func {
-		if debug {
-			println('\nget_type() .key_goT FN TYP line=$p.scanner.line_nr')
-		}
 		mut f := Fn{name: '_', mod: p.mod}
 		p.next()
 		line_nr := p.scanner.line_nr
 		p.fn_args(mut f)
 		// Same line, it's a return type
 		if p.scanner.line_nr == line_nr {
-			if debug {
-				println('same line getting type')
-			}
 			if p.tok == .name {
 				f.typ = p.get_type()
 			}
@@ -1813,7 +1822,6 @@ fn (p mut Parser) dot(str_typ string, method_ph int) string {
 			f := p.first_immutable_field
 			p.error('cannot modify immutable field `$f.name` (type `$f.parent_fn`)\n' +
 					'declare the field with `mut:`
-
 struct $f.parent_fn {
   mut:
 	$f.name $f.typ
@@ -1951,7 +1959,7 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 		if is_arr {
 			index_pos := p.cgen.cur_line.len
 			T := p.table.find_type(p.expression())
-			// Allows only i8-64 and u8-64 to be used when accessing an array
+			// Allows only i8-64 and byte-64 to be used when accessing an array
 			if T.parent != 'int' && T.parent != 'u32' {
 				p.check_types(T.name, 'int')
 			}

@@ -53,6 +53,7 @@ enum TypeCategory {
 	union_ // 5
 	c_struct
 	c_typedef
+	array
 }
 
 struct Var {
@@ -96,6 +97,7 @@ mut:
 	// This information is needed in the first pass.
 	is_placeholder bool
 	gen_str	       bool  // needs `.str()` method generation
+	
 }
 
 struct TypeNode {
@@ -456,7 +458,9 @@ fn (table &Table) type_has_method(typ &Type, name string) bool {
 // TODO use `?Fn`
 fn (table &Table) find_method(typ &Type, name string) Fn {
 	// println('TYPE HAS METHOD $name')
-	method := typ.find_method(name)
+	// method := typ.find_method(name)
+	t := table.typesmap[typ.name]
+	method := t.find_method(name)
 	if method.name.len == 0 && typ.parent.len > 0 {
 		parent := table.find_type(typ.parent)
 		return parent.find_method(name)
@@ -756,7 +760,7 @@ fn (table &Table) cgen_name_type_pair(name, typ string) string {
 fn is_valid_int_const(val, typ string) bool {
 	x := val.int()
 	switch typ {
-	case 'u8': return 0 <= x && x <= math.MaxU8
+	case 'byte': return 0 <= x && x <= math.MaxU8
 	case 'u16': return 0 <= x && x <= math.MaxU16
 	//case 'u32': return 0 <= x && x <= math.MaxU32
 	//case 'u64': return 0 <= x && x <= math.MaxU64

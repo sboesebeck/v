@@ -39,6 +39,9 @@ mut:
   cursor int // Cursor position
   overwrite bool
   cursor_row_offset int
+  prompt string
+  previous_lines []string
+  search_index int
 }
 
 
@@ -59,6 +62,7 @@ enum Action {
   history_previous
   history_next
   overwrite
+  clear_screen
 }
 
 // Toggle raw mode of the terminal by changing its attributes
@@ -106,10 +110,20 @@ fn (r Readline) read_char() byte {
 // Main function of the readline module
 // Will loop and ingest characters until EOF or Enter
 // Returns the completed line
-pub fn (r mut Readline) read_line() string {
+pub fn (r mut Readline) read_line(prompt string) string {
   r.current = ''
   r.cursor = 0
+  r.prompt = prompt
+  r.search_index = 0
+  if r.previous_lines.len <= 1 {
+    r.previous_lines << ''
+    r.previous_lines << ''
+  }
+  else {
+    r.previous_lines[0] = ''
+  }
 
+  print(r.prompt)
   for {
     c := r.read_char()
     a := r.analyse(c)
@@ -117,6 +131,8 @@ pub fn (r mut Readline) read_line() string {
       break
     }
   }
+  r.previous_lines[0] = ''
+  r.search_index = 0
   return r.current
 }
 
@@ -128,6 +144,7 @@ fn (r Readline) analyse(c byte) Action {
     case 255 : return Action.eof
     case `\n`: return Action.commit_line
     case `\r`: return Action.commit_line
+    case `\f`: return Action.clear_screen // CTRL + L
     case `\b`: return Action.delete_left // Backspace
     case 127 : return Action.delete_left // DEL
     case 27  : return r.analyse_control() // ESC
@@ -145,9 +162,10 @@ fn (r Readline) analyse_control() Action {
       switch sequence {
         case `C`: return Action.move_cursor_right
         case `D`: return Action.move_cursor_left
-        case `E`: return Action.history_next
-        case `F`: return Action.history_previous
+        case `B`: return Action.history_next
+        case `A`: return Action.history_previous
         case `1`: return r.analyse_extended_control()
+        case `3`: return r.analyse_extended_control_no_eat()
       }
   }
   return Action.nothing
@@ -167,18 +185,30 @@ fn (r Readline) analyse_extended_control() Action {
   return Action.nothing
 }
 
+fn (r Readline) analyse_extended_control_no_eat() Action {
+  c := r.read_char()
+  switch c {
+    case `~`: return Action.delete_right // Suppr key
+  }
+  return Action.nothing
+}
+
 fn (r mut Readline) execute(a Action, c byte) bool {
   switch a {
     case Action.eof: return true
     case Action.insert_character: r.insert_character(c)
     case Action.commit_line: return r.commit_line()
     case Action.delete_left: r.delete_character()
+    case Action.delete_right: r.suppr_character()
     case Action.move_cursor_left: r.move_cursor_left()
     case Action.move_cursor_right: r.move_cursor_right()
     case Action.move_cursor_begining: r.move_cursor_begining()
     case Action.move_cursor_end: r.move_cursor_end()
     case Action.move_cursor_word_left: r.move_cursor_word_left()
     case Action.move_cursor_word_right: r.move_cursor_word_right()
+    case Action.history_previous: r.history_previous()
+    case Action.history_next: r.history_next()
+    case Action.clear_screen: r.clear_screen()
   }
   return false
 }
@@ -222,15 +252,17 @@ fn calculate_screen_position(x_in int, y_in int, screen_columns int, char_count 
 }
 
 // Will redraw the line
+// TODO: Fix if prompt is longer than terminal columns
 fn (r mut Readline) refresh_line() {
   mut end_of_input := [0, 0]
-  calculate_screen_position(0, 0, get_screen_columns(), r.current.len, mut end_of_input)
+  calculate_screen_position(r.prompt.len, 0, get_screen_columns(), r.current.len, mut end_of_input)
   end_of_input[1] += r.current.count('\n')
   mut cursor_pos := [0, 0]
-  calculate_screen_position(0, 0, get_screen_columns(), r.cursor, mut cursor_pos)
+  calculate_screen_position(r.prompt.len, 0, get_screen_columns(), r.cursor, mut cursor_pos)
 
   shift_cursor(0, -r.cursor_row_offset)
   term.erase_toend()
+  print(r.prompt)
   print(r.current)
   if end_of_input[0] == 0 && end_of_input[1] > 0 {
     print('\n')
@@ -251,13 +283,8 @@ fn (r mut Readline) insert_character(c byte) {
     // Overwriting
   }
   r.cursor++
-  // Simply print new character if at end of line
-  // Otherwise refresh the line if cursor != r.current.len
-  if r.cursor == r.current.len && r.current.len < get_screen_columns() {
-    print(c.str())
-  } else {
-    r.refresh_line()
-  }
+  // Refresh the line to add the new character
+  r.refresh_line()
 }
 
 // Removes the character behind cursor.
@@ -270,9 +297,20 @@ fn (r mut Readline) delete_character() {
   r.refresh_line()
 }
 
+// Removes the character in front of cursor.
+fn (r mut Readline) suppr_character() {
+  if r.cursor > r.current.len {
+    return
+  }
+  r.current = r.current.left(r.cursor) + r.current.right(r.cursor + 1)
+  r.refresh_line()
+}
+
 // Add a line break then stops the main loop
 fn (r mut Readline) commit_line() bool {
+  r.previous_lines.insert(1, r.current)
   r.current = r.current + '\n'
+  println('')
   return true
 }
 
@@ -320,4 +358,33 @@ fn (r mut Readline) move_cursor_word_right() {
     for ; r.cursor < r.current.len && !r.is_break_character(r.current[r.cursor]); r.cursor++ {}
     r.refresh_line()
   }
+}
+
+fn (r mut Readline) clear_screen() {
+  term.set_cursor_position(1, 1)
+  term.erase_clear()
+  r.refresh_line()
+}
+
+fn (r mut Readline) history_previous() {
+  if r.search_index + 2 >= r.previous_lines.len {
+    return
+  }
+  if r.search_index == 0 {
+    r.previous_lines[0] = r.current
+  }
+  r.search_index++
+  r.current = r.previous_lines[r.search_index]
+  r.cursor = r.current.len
+  r.refresh_line()
+}
+
+fn (r mut Readline) history_next() {
+  if r.search_index <= 0 {
+    return
+  }
+  r.search_index--
+  r.current = r.previous_lines[r.search_index]
+  r.cursor = r.current.len
+  r.refresh_line()
 }
