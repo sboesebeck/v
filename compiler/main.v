@@ -193,11 +193,6 @@ fn main() {
 			os.mkdir(ModPath)
 		}
 	}
-	// No args? REPL
-	if args.len < 2 || (args.len == 2 && args[1] == '-') {
-		run_repl()
-		return
-	}
 	// Construct the V object from command line arguments
 	mut v := new_v(args)
 	if v.pref.is_verbose {
@@ -214,6 +209,12 @@ fn main() {
 		// for example for -repl usage, especially when piping lines to v
 		v.compile()
 		v.run_compiled_executable_and_exit()
+	}
+
+	// No args? REPL
+	if args.len < 2 || (args.len == 2 && args[1] == '-') || 'runrepl' in args {
+		run_repl()
+		return
 	}
 
 	v.compile()
@@ -836,7 +837,6 @@ Options:
   -                 Read from stdin (Default; Interactive mode if in a tty)
   -h, help          Display this information.
   -v, version       Display compiler version.
-  -lib              Generate object file.
   -prod             Build an optimized executable.
   -o <file>         Place output into <file>.
   -obf              Obfuscate the resulting binary.
@@ -846,6 +846,7 @@ Options:
   fmt               Run vfmt to format the source code.
   up                Update V.
   run               Build and execute a V program. You can add arguments after the file name.
+  build module      Compile a module into an object file.
 
 
 Files:
