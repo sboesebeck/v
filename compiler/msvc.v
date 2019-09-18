@@ -207,11 +207,6 @@ fn find_msvc() ?MsvcResult {
 	}
 }
 
-struct ParsedFlag {
-	f string
-	arg string
-}
-
 pub fn (v mut V) cc_msvc() { 
 	r := find_msvc() or {
 		// TODO: code reuse
@@ -230,7 +225,7 @@ pub fn (v mut V) cc_msvc() {
 	// -w: no warnings
 	// 2 unicode defines
 	// /Fo sets the object file name - needed so we can clean up after ourselves properly
-	mut a := ['-w', '/we4013', '/volatile:ms', '/D_UNICODE', '/DUNICODE', '/Fo"$out_name_obj"']
+	mut a := ['-w', '/we4013', '/volatile:ms', '/Fo"$out_name_obj"']
 
 	if v.pref.is_prod {
 		a << '/O2'
@@ -254,7 +249,7 @@ pub fn (v mut V) cc_msvc() {
 	v.out_name = os.realpath( v.out_name )
 
 	mut alibs := []string // builtin.o os.o http.o etc
-	if v.pref.build_mode == .build {
+	if v.pref.build_mode == .build_module {
 	}
 	else if v.pref.build_mode == .embed_vlib {
 		// 
@@ -305,106 +300,47 @@ pub fn (v mut V) cc_msvc() {
 	mut lib_paths := []string{}
 	mut other_flags := []string{}
 
-	// Emily:
-	// this is a hack to try and support -l -L and object files
-	// passed on the command line
-	mut seenflags := map[string]int // no need to add the same flags more than once
-	for f in v.table.flags {
-		seenflags[ f ] = seenflags[ f ] + 1
-		if seenflags[ f ] > 1 { continue }
-		// People like to put multiple flags per line (which really complicates things)
-		// ...so we need to handle that
-		mut rest := f
+	for flag in v.get_os_cflags() {
+		//println('fl: $flag.name | flag arg: $flag.value')
 
-		mut flags := []ParsedFlag{}
-		for {
-			mut base := rest
-
-			fl := if rest.starts_with('-') {
-				base = rest.right(2).trim_space()
-				rest.left(2)
-			} else {
-				''
+		// We need to see if the flag contains -l
+		// -l isnt recognised and these libs will be passed straight to the linker
+		// by the compiler
+		if flag.name == '-l' {
+			if flag.value.ends_with('.dll') {
+				cerror('MSVC cannot link against a dll (`#flag -l $flag.value`)')
 			}
-
-			// Which ever one of these is lowest we use
-			// TODO: we really shouldnt support all of these cmon
-			mut lowest := base.index('-')
-			// dont break paths with hyphens
-			if lowest != 0  {
-				lowest = -1
-			}
-			for x in [base.index(' '), base.index(',')] {
-				if (x < lowest && x != -1) || lowest == -1 {
-					lowest = x
-				}
-			}
-			arg := if lowest != -1 {
-				rest = base.right(lowest).trim_space().trim(',')
-				base.left(lowest).trim_space().trim(',')
-			} else {
-				rest = ''
-				base.trim_space()
-			}
-
-			flags << ParsedFlag {
-				fl, arg
-			}
-
-			if rest.len == 0 {
-				break
-			}
+			// MSVC has no method of linking against a .dll
+			// TODO: we should look for .defs aswell
+			lib_lib := flag.value + '.lib'
+			real_libs << lib_lib
 		}
-
-		for flag in flags {
-			fl := flag.f
-			mut arg := flag.arg
-			if fl == '-I' || fl == '-L' {
-				arg = os.realpath( arg )
-			}
-			//println('fl: $fl | flag arg: $arg')
-
-			// We need to see if the flag contains -l
-			// -l isnt recognised and these libs will be passed straight to the linker
-			// by the compiler
-			if fl == '-l' {
-				if arg.ends_with('.dll') {
-					cerror('MSVC cannot link against a dll (`#flag -l $arg`)')
-				}
-				// MSVC has no method of linking against a .dll
-				// TODO: we should look for .defs aswell
-				lib_lib := arg + '.lib'
-				real_libs << lib_lib
-			}
-			else if fl == '-I' {
-				inc_paths << ' -I "$arg" '
-			}
-			else if fl == '-L' {
-				lpath := f.right(2).trim_space()
-				lib_paths << lpath
-				lib_paths << lpath + os.PathSeparator + 'msvc'
-				// The above allows putting msvc specific .lib files in a subfolder msvc/ ,
-				// where gcc will NOT find them, but cl will do...
-				// NB: gcc is smart enough to not need .lib files at all in most cases, the .dll is enough.
-				// When both a msvc .lib file and .dll file are present in the same folder,
-				// as for example for glfw3, compilation with gcc would fail.
-			}
-			else if arg.ends_with('.o') {
-				// msvc expects .obj not .o
-				other_flags << arg + 'bj'
-			} 
-			else {
-				other_flags << arg
-			}
+		else if flag.name == '-I' {
+			inc_paths << flag.format()
 		}
-		
+		else if flag.name == '-L' {
+			lib_paths << flag.value
+			lib_paths << flag.value + os.PathSeparator + 'msvc'
+			// The above allows putting msvc specific .lib files in a subfolder msvc/ ,
+			// where gcc will NOT find them, but cl will do...
+			// NB: gcc is smart enough to not need .lib files at all in most cases, the .dll is enough.
+			// When both a msvc .lib file and .dll file are present in the same folder,
+			// as for example for glfw3, compilation with gcc would fail.
+		}
+		else if flag.value.ends_with('.o') {
+			// msvc expects .obj not .o
+			other_flags << '"${flag.value}bj"'
+		}
+		else {
+			other_flags << flag.value
+		}
 	}
 
 	// Include the base paths
-	a << ' -I "$r.ucrt_include_path" '
-	a << ' -I "$r.vs_include_path" '
-	a << ' -I "$r.um_include_path" '
-	a << ' -I "$r.shared_include_path" '
+	a << '-I "$r.ucrt_include_path"'
+	a << '-I "$r.vs_include_path"'
+	a << '-I "$r.um_include_path"'
+	a << '-I "$r.shared_include_path"'
 
 	a << inc_paths
 
@@ -463,18 +399,16 @@ pub fn (v mut V) cc_msvc() {
 	os.rm(out_name_obj)
 }
 
-fn build_thirdparty_obj_file_with_msvc(flag string) {
+fn build_thirdparty_obj_file_with_msvc(path string) {
 	msvc := find_msvc() or {
 		println('Could not find visual studio')
 		return
 	}
 
-	mut obj_path := flag.all_after(' ')
+	// msvc expects .obj not .o
+	mut obj_path := '${path}bj'
 
-	if obj_path.ends_with('.o') {
-		// msvc expects .obj not .o
-		obj_path = obj_path + 'bj'
-	}
+	obj_path = os.realpath(obj_path)
 
 	if os.file_exists(obj_path) {
 		println('$obj_path already build.')
@@ -482,21 +416,21 @@ fn build_thirdparty_obj_file_with_msvc(flag string) {
 	} 
 
 	println('$obj_path not found, building it (with msvc)...') 
-	parent := os.dir( obj_path )
+	parent := os.dir(obj_path)
 	files := os.ls(parent)
 
 	mut cfiles := '' 
 	for file in files {
 		if file.ends_with('.c') { 
 			cfiles += '"' + os.realpath( parent + os.PathSeparator + file )  + '" '
-		} 
+		}
 	}
 
 	include_string := '-I "$msvc.ucrt_include_path" -I "$msvc.vs_include_path" -I "$msvc.um_include_path" -I "$msvc.shared_include_path"'
 
 	//println('cfiles: $cfiles')
 
-	cmd := '""$msvc.full_cl_exe_path" /volatile:ms /Z7 $include_string /c $cfiles /Fo"$obj_path" /D_UNICODE /DUNICODE"'
+	cmd := '""$msvc.full_cl_exe_path" /volatile:ms /Z7 $include_string /c $cfiles /Fo"$obj_path""'
 	//NB: the quotes above ARE balanced.
 	println('thirdparty cmd line: $cmd')
 	res := os.exec(cmd) or {

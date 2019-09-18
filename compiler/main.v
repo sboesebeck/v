@@ -6,12 +6,12 @@ module main
 
 import (
 	os
-	time
 	strings
+	benchmark
 )
 
 const (
-	Version = '0.1.18'
+	Version = '0.1.20'
 )
 
 enum BuildMode {
@@ -23,11 +23,12 @@ enum BuildMode {
 	embed_vlib
 	// `v -lib ~/v/os`
 	// build any module (generate os.o + os.vh)
-	build //TODO a better name would be smth like `.build_module` I think
+	build_module
 }
 
 const (
-	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd', 'netbsd', 'dragonfly', 'msvc']
+	SupportedPlatforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd',
+		'netbsd', 'dragonfly', 'msvc', 'android', 'js']
 	ModPath            = os.home_dir() + '/.vmodules/'
 )
 
@@ -40,6 +41,7 @@ enum OS {
 	netbsd
 	dragonfly
 	msvc
+	js
 }
 
 enum Pass {
@@ -64,7 +66,7 @@ mut:
 	dir        string // directory (or file) being compiled (TODO rename to path?)
 	table      &Table // table with types, vars, functions etc
 	cgen       &CGen // C code generator
-	pref       &Preferences // all the prefrences and settings extracted to a struct for reusability
+	pref       &Preferences // all the preferences and settings extracted to a struct for reusability
 	lang_dir   string // "~/code/v"
 	out_name   string // "program.exe"
 	vroot      string
@@ -97,15 +99,17 @@ mut:
 						 // You could pass several -cflags XXX arguments. They will be merged with each other.
 						 // You can also quote several options at the same time: -cflags '-Os -fno-inline-small-functions'.
 	ccompiler  string // the name of the used C compiler
+	building_v bool
+	autofree   bool
 }
-
 
 fn main() {
 	// There's no `flags` module yet, so args have to be parsed manually
 	args := env_vflags_and_os_args()
 	// Print the version and exit.
 	if '-v' in args || '--version' in args || 'version' in args {
-		println('V $Version')
+		version_hash := vhash()
+		println('V $Version $version_hash')
 		return
 	}
 	if '-h' in args || '--help' in args || 'help' in args {
@@ -121,46 +125,15 @@ fn main() {
 		return
 	}
 	if 'get' in args {
-		println('use `v install` to install modules from vpm.vlang.io')
+		println('use `v install` to install modules from vpm.vlang.io ')
 		return
 	}
 	if 'symlink' in args {
 		create_symlink()
 		return
 	}
-	if args.join(' ').contains(' test v') {
-		test_v()
-		return
-	}
 	if 'install' in args {
-		if args.len < 3 {
-			println('usage: v install [module] [module] [...]')
-			return
-		}
-		names := args.slice(2, args.len)
-		vexec := os.executable()
-		vroot := os.dir(vexec)
-		vget := '$vroot/tools/vget'
-		if true {
-			//println('Building vget...')
-			os.chdir(vroot + '/tools')
-			vgetcompilation := os.exec('$vexec -o $vget vget.v') or {
-				cerror(err)
-				return
-			}
-			if vgetcompilation.exit_code != 0 {
-				cerror( vgetcompilation.output )
-				return
-			}
-		}
-		vgetresult := os.exec('$vget ' + names.join(' ')) or {
-			cerror(err)
-			return
-		}
-		if vgetresult.exit_code != 0 {
-			cerror( vgetresult.output )
-			return
-		}
+		install_v(args)
 		return
 	}
 	// TODO quit if the compiler is too old
@@ -174,27 +147,15 @@ fn main() {
 */
 	// Just fmt and exit
 	if 'fmt' in args {
-		file := args.last()
-		if !os.file_exists(file) {
-			println('"$file" does not exist')
-			exit(1)
-		}
-		if !file.ends_with('.v') {
-			println('v fmt can only be used on .v files')
-			exit(1)
-		}
-		println('vfmt is temporarily disabled')
+		vfmt(args)
 		return
-	}
-	// v get sqlite
-	if 'get' in args {
-		// Create the modules directory if it's not there.
-		if !os.file_exists(ModPath)  {
-			os.mkdir(ModPath)
-		}
 	}
 	// Construct the V object from command line arguments
 	mut v := new_v(args)
+	if args.join(' ').contains(' test v') {
+		v.test_v()
+		return
+	}
 	if v.pref.is_verbose {
 		println(args)
 	}
@@ -222,7 +183,7 @@ fn main() {
 	if v.pref.is_test {
 		v.run_compiled_executable_and_exit()
 	}
-
+	
 }
 
 fn (v mut V) compile() {
@@ -242,7 +203,7 @@ fn (v mut V) compile() {
 		println(v.files)
 	}
 	v.add_v_files_to_compile()
-	if v.pref.is_verbose {
+	if v.pref.is_verbose || v.pref.is_debug {
 		println('all .v files:')
 		println(v.files)
 	}
@@ -254,17 +215,35 @@ fn (v mut V) compile() {
 	// Main pass
 	cgen.pass = Pass.main
 	if v.pref.is_debug {
-		cgen.genln('#define VDEBUG (1) ')
+		$if js {
+			cgen.genln('const VDEBUG = 1;\n')
+		}	$else {
+			cgen.genln('#define VDEBUG (1)')
+		}
+	}
+	if v.os == .js {
+		cgen.genln('#define _VJS (1) ')
 	}
 
-	cgen.genln(CommonCHeaders)
+	if v.pref.building_v {
+		cgen.genln('#ifndef V_COMMIT_HASH')
+		cgen.genln('#define V_COMMIT_HASH "' + vhash() + '"')
+		cgen.genln('#endif')
+	}
+		
+	$if js {
+		cgen.genln(js_headers)
+	} $else {
+		cgen.genln(CommonCHeaders)
+	}
 	
 	v.generate_hotcode_reloading_declarations()
 
-	imports_json := v.table.imports.contains('json')
+	imports_json := 'json' in v.table.imports
 	// TODO remove global UI hack
-	if v.os == .mac && ((v.pref.build_mode == .embed_vlib && v.table.imports.contains('ui')) ||
-	(v.pref.build_mode == .build && v.dir.contains('/ui'))) {
+	if v.os == .mac && ((v.pref.build_mode == .embed_vlib && 'ui' in
+		v.table.imports) || (v.pref.build_mode == .build_module &&
+		v.dir.contains('/ui'))) {
 		cgen.genln('id defaultFont = 0; // main.v')
 	}
 	// We need the cjson header for all the json decoding user will do in default mode
@@ -278,17 +257,20 @@ fn (v mut V) compile() {
 		// `/usr/bin/ld: multiple definition of 'total_m'`
 		// TODO
 		//cgen.genln('i64 total_m = 0; // For counting total RAM allocated')
-		cgen.genln('int g_test_ok = 1; ')
-		if v.table.imports.contains('json') {
+		//if v.pref.is_test {
+		$if !js {
+			cgen.genln('int g_test_ok = 1; ')
+		}
+		if 'json' in v.table.imports {
 			cgen.genln('
 #define js_get(object, key) cJSON_GetObjectItemCaseSensitive((object), (key))
 ')
 		}
 	}
-	if os.args.contains('-debug_alloc') {
+	if '-debug_alloc' in os.args {
 		cgen.genln('#define DEBUG_ALLOC 1')
 	}
-	cgen.genln('/*================================== FNS =================================*/')
+	//cgen.genln('/*================================== FNS =================================*/')
 	cgen.genln('this line will be replaced with definitions')
 	defs_pos := cgen.lines.len - 1
 	for file in v.files {
@@ -303,12 +285,16 @@ fn (v mut V) compile() {
 	v.log('Done parsing.')
 	// Write everything
 	mut d := strings.new_builder(10000)// Avoid unnecessary allocations
-	d.writeln(cgen.includes.join_lines())
-	d.writeln(cgen.typedefs.join_lines())
-	d.writeln(v.c_type_definitions())
-	d.writeln('\nstring _STR(const char*, ...);\n')
-	d.writeln('\nstring _STR_TMP(const char*, ...);\n')
-	d.writeln(cgen.fns.join_lines())
+	$if !js {
+		d.writeln(cgen.includes.join_lines())
+		d.writeln(cgen.typedefs.join_lines())
+		d.writeln(v.type_definitions())
+		d.writeln('\nstring _STR(const char*, ...);\n')
+		d.writeln('\nstring _STR_TMP(const char*, ...);\n')
+		d.writeln(cgen.fns.join_lines()) // fn definitions
+	} $else {
+		d.writeln(v.type_definitions())
+	}
 	d.writeln(cgen.consts.join_lines())
 	d.writeln(cgen.thread_args.join_lines())
 	if v.pref.is_prof {
@@ -317,21 +303,24 @@ fn (v mut V) compile() {
 	}
 	dd := d.str()
 	cgen.lines[defs_pos] = dd// TODO `def.str()` doesn't compile
-
-  v.generate_main()
-
-  v.generate_hotcode_reloading_code()
-
-  cgen.save()
+	v.generate_main()
+	v.generate_hot_reload_code()
 	if v.pref.is_verbose {
 		v.log('flags=')
-		println(v.table.flags)
+		for flag in v.get_os_cflags() {
+			println(' * ' + flag.format())
+		}
 	}
+	$if js {
+		cgen.genln('main();')
+	}	
+	cgen.save()
 	v.cc()
 }
 
 fn (v mut V) generate_main() {
 	mut cgen := v.cgen
+	$if js { return }
 
 	// if v.build_mode in [.default, .embed_vlib] {
 	if v.pref.build_mode == .default_mode || v.pref.build_mode == .embed_vlib {
@@ -344,11 +333,9 @@ fn (v mut V) generate_main() {
 		// vlib can't have `init_consts()`
 		cgen.genln('void init_consts() {
 #ifdef _WIN32
-#ifndef _BOOTSTRAP_NO_UNICODE_STREAM
 _setmode(_fileno(stdout), _O_U8TEXT);
 SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), ENABLE_PROCESSED_OUTPUT | 0x0004);
 // ENABLE_VIRTUAL_TERMINAL_PROCESSING
-#endif
 #endif
 g_str_buf=malloc(1000);
 $consts_init_body
@@ -391,7 +378,7 @@ string _STR_TMP(const char *fmt, ...) {
 
 	// Make sure the main function exists
 	// Obviously we don't need it in libraries
-	if v.pref.build_mode != .build {
+	if v.pref.build_mode != .build_module {
 		if !v.table.main_exists() && !v.pref.is_test {
 			// It can be skipped in single file programs
 			if v.pref.is_script {
@@ -437,7 +424,7 @@ fn (v V) run_compiled_executable_and_exit() {
 	if v.pref.is_verbose {
 		println('============ running $v.out_name ============')
 	}	
-	mut cmd := final_target_out_name(v.out_name).replace('.exe','')
+	mut cmd := '"' + final_target_out_name(v.out_name).replace('.exe','') + '"'
 	if os.args.len > 3 {
 		cmd += ' ' + os.args.right(3).join(' ')
 	}
@@ -486,7 +473,16 @@ fn (v &V) v_files_from_dir(dir string) []string {
 		if file.ends_with('_mac.v') && v.os != .mac {
 			continue
 		}
+		if file.ends_with('_js.v') && v.os != .js {
+			continue
+		}
 		if file.ends_with('_nix.v') && (v.os == .windows || v.os == .msvc) {
+			continue
+		}
+		if file.ends_with('_js.v') && v.os != .js {
+			continue
+		}
+		if file.ends_with('_c.v') && v.os == .js {
 			continue
 		}
 		res << '$dir/$file'
@@ -516,7 +512,7 @@ fn (v mut V) add_v_files_to_compile() {
 		dir = dir.all_before('/')
 	}
 	else {
-		// Add .v files from the directory being compied
+		// Add .v files from the directory being compiled
 		files := v.v_files_from_dir(dir)
 		for file in files {
 			user_files << file
@@ -600,10 +596,11 @@ fn (v mut V) add_v_files_to_compile() {
 		// TmpPath/vlib
 		// These were generated by vfmt
 /*
-		if v.pref.build_mode == .default_mode || v.pref.build_mode == .build {
+		if v.pref.build_mode == .default_mode || v.pref.build_mode == .build_module {
 			module_path = '$ModPath/vlib/$mod_p'
 		}
 */
+		if mod == 'builtin' { continue } // builtin files were already added
 		vfiles := v.v_files_from_dir(mod_path)
 		for file in vfiles {
 			if !(file in v.files) {
@@ -624,7 +621,7 @@ fn (v mut V) add_v_files_to_compile() {
 		}
 		j++
 		// TODO remove this once imports work with .build
-		if v.pref.build_mode == .build && j >= len / 2{
+		if v.pref.build_mode == .build_module && j >= len / 2{
 			break
 		}
 		//println(fit)
@@ -656,7 +653,7 @@ fn get_all_after(joined_args, arg, def string) string {
 fn (v &V) module_path(mod string) string {
 	// submodule support
 	if mod.contains('.') {
-		//return mod.replace('.', path_sep)
+		//return mod.replace('.', os.PathSeparator)
 		return mod.replace('.', '/')
 	}
 	return mod
@@ -675,8 +672,11 @@ fn new_v(args[]string) &V {
 	mut out_name := get_arg(joined_args, 'o', 'a.out')
 
 	mut dir := args.last()
-	if args.contains('run') {
+	if 'run' in args {
 		dir = get_all_after(joined_args, 'run', '')
+	}
+	if dir.ends_with(os.PathSeparator) {
+		dir = dir.all_before_last(os.PathSeparator)
 	}
 	if args.len < 2 {
 		dir = ''
@@ -687,11 +687,13 @@ fn new_v(args[]string) &V {
 	mut mod := ''
 	//if args.contains('-lib') {
 	if joined_args.contains('build module ') {
-		build_mode = .build
-		// v -lib ~/v/os => os.o
+		build_mode = .build_module
+		// v build module ~/v/os => os.o
 		//mod = os.dir(dir)
-		if dir.contains('/') {
-			mod = dir.all_after('/')
+		mod = if dir.contains(os.PathSeparator) {
+			dir.all_after(os.PathSeparator)
+		} else {
+			dir
 		}
 		println('Building module "${mod}" (dir="$dir")...')
 		//out_name = '$TmpPath/vlib/${base}.o'
@@ -707,7 +709,7 @@ fn new_v(args[]string) &V {
 */
 	}
 	// TODO embed_vlib is temporarily the default mode. It's much slower.
-	else if !args.contains('-embed_vlib') {
+	else if !('-embed_vlib' in args) {
 		build_mode = .embed_vlib
 	}
 	//
@@ -723,7 +725,7 @@ fn new_v(args[]string) &V {
 	}
 	// if we are in `/foo` and run `v .`, the executable should be `foo`
 	if dir == '.' && out_name == 'a.out' {
-		base := os.getwd().all_after('/')
+		base := os.getwd().all_after(os.PathSeparator)
 		out_name = base.trim_space()
 	}
 	mut _os := OS.mac
@@ -761,8 +763,11 @@ fn new_v(args[]string) &V {
 		case 'netbsd': _os = .netbsd
 		case 'dragonfly': _os = .dragonfly
 		case 'msvc': _os = .msvc
+		case 'js': _os = .js
 		}
 	}
+	//println('OS=$_os')
+	builtin := 'builtin.v'
 	builtins := [
 	'array.v',
 	'string.v',
@@ -772,13 +777,12 @@ fn new_v(args[]string) &V {
 	'map.v',
 	'option.v',
 	]
+	//println(builtins)
 	// Location of all vlib files
 	vroot := os.dir(os.executable())
 	//println('VROOT=$vroot')
 	// v.exe's parent directory should contain vlib
-	if os.dir_exists(vroot) && os.dir_exists(vroot + '/vlib/builtin') {
-
-	}  else {
+	if !os.dir_exists(vroot) || !os.dir_exists(vroot + '/vlib/builtin') {
 		println('vlib not found. It should be next to the V executable. ')
 		println('Go to https://vlang.io to install V.')
 		exit(1)
@@ -790,13 +794,16 @@ fn new_v(args[]string) &V {
 	//if !out_name.contains('builtin.o') {
 		for builtin in builtins {
 			mut f := '$vroot/vlib/builtin/$builtin'
+			__ := 1
+			$if js {
+				f = '$vroot/vlib/builtin/js/$builtin'
+			}
 			// In default mode we use precompiled vlib.o, point to .vh files with signatures
-			if build_mode == .default_mode || build_mode == .build {
+			if build_mode == .default_mode || build_mode == .build_module {
 				//f = '$TmpPath/vlib/builtin/${builtin}h'
 			}
 			files << f
 		}
-	//}
 
 	mut cflags := ''
 	for ci, cv in args {
@@ -805,33 +812,39 @@ fn new_v(args[]string) &V {
 		}
 	}
 
-	obfuscate := args.contains('-obf')
+	rdir := os.realpath( dir )
+	rdir_name := os.filename( rdir )
+
+	obfuscate := '-obf' in args
+	is_repl := '-repl' in args
 	pref := &Preferences {
 		is_test: is_test
 		is_script: is_script
-		is_so: args.contains('-shared')
-		is_prod: args.contains('-prod')
-		is_verbose: args.contains('-verbose')
-		is_debuggable: args.contains('-g') // -debuggable implys debug
-		is_debug: args.contains('-debug') || args.contains('-g')
+		is_so: '-shared' in args
+		is_prod: '-prod' in args
+		is_verbose: '-verbose' in args || '--verbose' in args
+		is_debuggable: '-g' in args
+		is_debug: '-debug' in args || '-g' in args
 		obfuscate: obfuscate
-		is_prof: args.contains('-prof')
-		is_live: args.contains('-live')
-		sanitize: args.contains('-sanitize')
-		nofmt: args.contains('-nofmt')
-		show_c_cmd: args.contains('-show_c_cmd')
-		translated: args.contains('translated')
-		is_run: args.contains('run')
-		is_repl: args.contains('-repl')
+		is_prof: '-prof' in args
+		is_live: '-live' in args
+		sanitize: '-sanitize' in args
+		nofmt: '-nofmt' in args
+		show_c_cmd: '-show_c_cmd' in args
+		translated: 'translated' in args
+		is_run: 'run' in args
+		autofree: 'autofree' in args
+		is_repl: is_repl
 		build_mode: build_mode
 		cflags: cflags
 		ccompiler: find_c_compiler()
+		building_v: !is_repl && (rdir_name == 'compiler'  || dir.contains('vlib'))
 	}
 	if pref.is_verbose || pref.is_debug {
 		println('C compiler=$pref.ccompiler')
 	}
 	if pref.is_so {
-		out_name_c = out_name.all_after('/') + '_shared_lib.c'
+		out_name_c = out_name.all_after(os.PathSeparator) + '_shared_lib.c'
 	}
 	return &V{
 		os: _os
@@ -847,41 +860,6 @@ fn new_v(args[]string) &V {
 		mod: mod
 	}
 }
-
-
-const (
-	HelpText = '
-Usage: v [options] [file | directory]
-
-Options:
-  -                 Read from stdin (Default; Interactive mode if in a tty)
-  -h, help          Display this information.
-  -v, version       Display compiler version.
-  -prod             Build an optimized executable.
-  -o <file>         Place output into <file>.
-  -obf              Obfuscate the resulting binary.
-  -show_c_cmd       Print the full C compilation command and how much time it took.
-  -debug            Leave a C file for debugging in .program.c.
-  -live             Enable hot code reloading (required by functions marked with [live]).
-  fmt               Run vfmt to format the source code.
-  up                Update V.
-  run               Build and execute a V program. You can add arguments after the file name.
-  build module      Compile a module into an object file.
-
-
-Files:
-  <file>_test.v     Test file.
-'
-)
-
-/*
-- To disable automatic formatting:
-v -nofmt file.v
-
-- To build a program with an embedded vlib  (use this if you do not have prebuilt vlib libraries or if you
-are working on vlib)
-v -embed_vlib file.v
-*/
 
 fn env_vflags_and_os_args() []string {
    mut args := []string
@@ -907,7 +885,11 @@ fn update_v() {
 	}
 	println(s.output)
 	$if windows {
-		os.mv('$vroot/v.exe', '$vroot/v_old.exe')
+		v_backup_file := '$vroot/v_old.exe'
+		if os.file_exists( v_backup_file ) {
+			os.rm( v_backup_file )
+		}
+		os.mv('$vroot/v.exe', v_backup_file)
 		s2 := os.exec('$vroot/make.bat') or {
 			cerror(err)
 			return
@@ -922,53 +904,119 @@ fn update_v() {
 	}
 }
 
-fn test_v() {
+fn vfmt(args[]string) {
+	file := args.last()
+	if !os.file_exists(file) {
+		println('"$file" does not exist')
+		exit(1)
+	}
+	if !file.ends_with('.v') {
+		println('v fmt can only be used on .v files')
+		exit(1)
+	}
+	println('vfmt is temporarily disabled')
+}
+
+fn install_v(args[]string) {
+	if args.len < 3 {
+		println('usage: v install [module] [module] [...]')
+		return
+	}
+	names := args.slice(2, args.len)
+	vexec := os.executable()
+	vroot := os.dir(vexec)
+	vget := '$vroot/tools/vget'
+	if true {
+		//println('Building vget...')
+		os.chdir(vroot + '/tools')
+		vgetcompilation := os.exec('$vexec -o $vget vget.v') or {
+			cerror(err)
+			return
+		}
+		if vgetcompilation.exit_code != 0 {
+			cerror( vgetcompilation.output )
+			return
+		}
+	}
+	vgetresult := os.exec('$vget ' + names.join(' ')) or {
+		cerror(err)
+		return
+	}
+	if vgetresult.exit_code != 0 {
+		cerror( vgetresult.output )
+		return
+	}
+}
+
+fn (v &V) test_v() {
 	args := env_vflags_and_os_args()
 	vexe := args[0]
 	// Emily: pass args from the invocation to the test
 	// e.g. `v -g -os msvc test v` -> `$vexe -g -os msvc $file`
-	mut joined_args := env_vflags_and_os_args().right(1).join(' ')
+	mut joined_args := args.right(1).join(' ')
 	joined_args = joined_args.left(joined_args.last_index('test'))
-	println('$joined_args')
+	//	println('$joined_args')
 	mut failed := false
 	test_files := os.walk_ext('.', '_test.v')
-	for dot_relative_file in test_files {
+
+	println('Testing...')
+	mut tmark := benchmark.new_benchmark()
+	for dot_relative_file in test_files {		
 		relative_file := dot_relative_file.replace('./', '')
 		file := os.realpath( relative_file )
 		tmpcfilepath := file.replace('_test.v', '_test.tmp.c')
-		print(relative_file + ' ')
-		r := os.exec('$vexe $joined_args -debug $file') or {
+		
+		mut cmd := '"$vexe" $joined_args -debug "$file"'
+		if os.user_os() == 'windows' { cmd = '"$cmd"' }
+		
+		tmark.step()
+		r := os.exec(cmd) or {
+			tmark.fail()
 			failed = true
-			println('FAIL')
+			println(tmark.step_message('$relative_file FAIL'))
 			continue
 		}
 		if r.exit_code != 0 {
-			println('FAIL `$file` (\n$r.output\n)')
 			failed = true
+			tmark.fail()
+			println(tmark.step_message('$relative_file FAIL \n`$file`\n (\n$r.output\n)'))
 		} else {
-			println('OK')
+			tmark.ok()
+			println(tmark.step_message('$relative_file OK'))
 		}
 		os.rm( tmpcfilepath )
 	}
+	tmark.stop()
+	println( tmark.total_message('running V tests') )
+
 	println('\nBuilding examples...')
 	examples := os.walk_ext('examples', '.v')
+	mut bmark := benchmark.new_benchmark()
 	for relative_file in examples {
 		file := os.realpath( relative_file )
 		tmpcfilepath := file.replace('.v', '.tmp.c')
-		print(relative_file + ' ')
-		r := os.exec('$vexe $joined_args -debug $file') or {
+		mut cmd := '"$vexe" $joined_args -debug "$file"'
+		if os.user_os() == 'windows' { cmd = '"$cmd"' }
+		bmark.step()
+		r := os.exec(cmd) or {
 			failed = true
-			println('FAIL')
+			bmark.fail()
+			println(bmark.step_message('$relative_file FAIL'))
 			continue
 		}
 		if r.exit_code != 0 {
-			println('FAIL `$file` (\n$r.output\n)')
 			failed = true
+			bmark.fail()
+			println(bmark.step_message('$relative_file FAIL \n`$file`\n (\n$r.output\n)'))
 		} else {
-			println('OK')
+			bmark.ok()
+			println(bmark.step_message('$relative_file OK'))
 		}
 		os.rm(tmpcfilepath)
 	}
+	bmark.stop()
+	println( bmark.total_message('building examples') )
+	
 	if failed {
 		exit(1)
 	}
@@ -990,4 +1038,11 @@ pub fn cerror(s string) {
 	println('V error: $s')
 	os.flush_stdout()
 	exit(1)
+}
+
+fn vhash() string {
+	mut buf := [50]byte
+	buf[0] = 0
+	C.snprintf(*char(buf), 50, '%s', C.V_COMMIT_HASH )
+	return tos_clone(buf)
 }
