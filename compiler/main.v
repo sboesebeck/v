@@ -101,6 +101,7 @@ mut:
 	ccompiler  string // the name of the used C compiler
 	building_v bool
 	autofree   bool
+	compress   bool
 }
 
 fn main() {
@@ -184,6 +185,25 @@ fn main() {
 		v.run_compiled_executable_and_exit()
 	}
 	
+	// TODO remove
+	if v.pref.autofree {
+		println('started freeing v struct')
+		v.table.typesmap.free()
+		v.table.obf_ids.free()
+		v.cgen.lines.free()
+		free(v.cgen)
+		for _, f in v.table.fns {
+			f.local_vars.free()
+			f.args.free()
+			//f.defer_text.free()
+		}	
+		v.table.fns.free()
+		free(v.table)
+		//for p in parsers {
+			
+		//}	
+		println('done!')
+	}	
 }
 
 fn (v mut V) compile() {
@@ -211,6 +231,8 @@ fn (v mut V) compile() {
 	for file in v.files {
 		mut p := v.new_parser(file)
 		p.parse(.decl)
+		
+		
 	}
 	// Main pass
 	cgen.pass = Pass.main
@@ -833,7 +855,8 @@ fn new_v(args[]string) &V {
 		show_c_cmd: '-show_c_cmd' in args
 		translated: 'translated' in args
 		is_run: 'run' in args
-		autofree: 'autofree' in args
+		autofree: '-autofree' in args
+		compress: '-compress' in args
 		is_repl: is_repl
 		build_mode: build_mode
 		cflags: cflags
@@ -890,7 +913,7 @@ fn update_v() {
 			os.rm( v_backup_file )
 		}
 		os.mv('$vroot/v.exe', v_backup_file)
-		s2 := os.exec('$vroot/make.bat') or {
+		s2 := os.exec('"$vroot/make.bat"') or {
 			cerror(err)
 			return
 		}
@@ -949,6 +972,10 @@ fn install_v(args[]string) {
 }
 
 fn (v &V) test_v() {
+	if !os.dir_exists('vlib') {
+		println('run "v test v" next to the vlib/ directory')
+		exit(1)
+	}	
 	args := env_vflags_and_os_args()
 	vexe := args[0]
 	// Emily: pass args from the invocation to the test

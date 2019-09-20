@@ -33,6 +33,7 @@ pub fn _make(len, cap, elm_size int) array {
 	return new_array(len, cap, elm_size)
 }
 
+
 // Private function, used by V (`nums := [1, 2, 3]`)
 fn new_array_from_c_array(len, cap, elm_size int, c_array voidptr) array {
 	arr := array {
@@ -72,21 +73,6 @@ fn array_repeat_old(val voidptr, nr_repeats, elm_size int) array {
 }
 
 pub fn (a array) repeat(nr_repeats int) array {
-	arr := array {
-		len: nr_repeats
-		cap: nr_repeats
-		element_size: a.element_size
-		data: malloc(nr_repeats * a.element_size)
-	}
-	val := a.data + 0 //nr_repeats * a.element_size
-	for i := 0; i < nr_repeats; i++ {
-		C.memcpy(arr.data + i * a.element_size, val, a.element_size)
-	}
-	return arr
-}
-
-// TODO remove
-pub fn (a array) repeat2(nr_repeats int) array {
 	arr := array {
 		len: nr_repeats
 		cap: nr_repeats
