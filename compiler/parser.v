@@ -62,6 +62,7 @@ mut:
 	v_script bool // "V bash", import all os functions into global space
 	var_decl_name string 	// To allow declaring the variable so that it can be used in the struct initialization
 	is_alloc   bool // Whether current expression resulted in an allocation
+	is_const_literal bool // `1`, `2.0` etc, so that `u64 == 0` works
 	cur_gen_type string // "App" to replace "T" in current generic function
 	is_vweb bool
 	is_sql bool
@@ -774,6 +775,25 @@ fn (p &Parser) warn(s string) {
 	println('warning: $p.scanner.file_path:${p.scanner.line_nr+1}: $s')
 }
 
+
+fn (p mut Parser) error_with_position(e string, sp ScannerPos) {
+	p.scanner.goto_scanner_position( sp )
+	p.error( e )
+}
+
+fn (p mut Parser) production_error(e string, sp ScannerPos) {
+	if p.pref.is_prod {
+		p.scanner.goto_scanner_position( sp )
+		p.error( e )
+	}else {
+		// on a warning, restore the scanner state after printing the warning:
+		cpos := p.scanner.get_scanner_pos()
+		p.scanner.goto_scanner_position( sp )
+		p.warn(e)
+		p.scanner.goto_scanner_position( cpos )
+	}
+}
+
 fn (p mut Parser) error(s string) {
 	// Dump all vars and types for debugging
 	if p.pref.is_debug {
@@ -813,6 +833,25 @@ fn (p mut Parser) get_type() string {
 	mut mul := false
 	mut nr_muls := 0
 	mut typ := ''
+	// multiple returns
+	if p.tok == .lpar {
+		// if p.inside_tuple {
+		// 	p.error('unexpected (') 
+		// } 
+		// p.inside_tuple = true 
+		p.check(.lpar) 
+		mut types := []string 
+		for {
+			types << p.get_type() 
+			if p.tok != .comma {
+				break 
+			} 
+			p.check(.comma) 
+		}
+		p.check(.rpar) 
+		// p.inside_tuple = false 
+		return 'MultiReturn_' + types.join('_').replace('*', '0ptr0')
+	}
 	// fn type
 	if p.tok == .func {
 		mut f := Fn{name: '_', mod: p.mod}
@@ -1142,8 +1181,9 @@ fn (p mut Parser) statement(add_semi bool) string {
 			p.check(.colon)
 			return ''
 		}
-		// `a := 777`
-		else if p.peek() == .decl_assign {
+		// `a := 777` 
+		else if p.peek() == .decl_assign || p.peek() == .comma {
+			p.log('var decl')
 			p.var_decl()
 		}
 		else {
@@ -1243,6 +1283,7 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 		p.mark_var_changed(v)
 	}
 	is_str := v.typ == 'string'
+	is_ustr := v.typ == 'ustring'
 	switch tok {
 	case Token.assign:
 		if !is_map && !p.is_empty_c_struct_init {
@@ -1251,6 +1292,9 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 	case Token.plus_assign:
 		if is_str && !p.is_js {
 			p.gen('= string_add($v.name, ')// TODO can't do `foo.bar += '!'`
+		}
+		else if is_ustr {
+			p.gen('= ustring_add($v.name, ')
 		}
 		else {
 			p.gen(' += ')
@@ -1278,7 +1322,7 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 		p.scanner.line_nr--
 		p.error('cannot use type `$expr_type` as type `$p.assigned_type` in assignment')
 	}
-	if is_str && tok == .plus_assign && !p.is_js {
+	if (is_str || is_ustr) && tok == .plus_assign && !p.is_js {
 		p.gen(')')
 	}
 	// p.assigned_var = ''
@@ -1300,26 +1344,55 @@ fn (p mut Parser) var_decl() {
 		p.check(.key_static)
 		p.fspace()
 	}
-	// println('var decl tok=${p.strtok()} ismut=$is_mut')
-	name := p.check_name()
-	p.var_decl_name = name
-	// Don't allow declaring a variable with the same name. Even in a child scope
-	// (shadowing is not allowed)
-	if !p.builtin_mod && p.cur_fn.known_var(name) {
-		v := p.cur_fn.find_var(name)
-		p.error('redefinition of `$name`')
+	
+	mut names := []string
+	names << p.check_name()
+	for p.tok == .comma {
+		p.check(.comma)
+		names << p.check_name()
 	}
-	if name.len > 1 && contains_capital(name) {
-		p.error('variable names cannot contain uppercase letters, use snake_case instead')
-	}
+	mr_var_name := if names.len > 1 { '__ret_'+names.join('_') } else { names[0] }
 	p.check_space(.decl_assign) // :=
-	typ := p.gen_var_decl(name, is_static)
-	p.register_var(Var {
-		name: name
-		typ: typ
-		is_mut: is_mut
-		is_alloc: p.is_alloc || typ.starts_with('array_')
-	})
+	// t := p.bool_expression()
+	p.var_decl_name = mr_var_name
+	t := p.gen_var_decl(mr_var_name, is_static)
+
+	mut types := [t]
+	// multiple returns
+	if names.len > 1 {
+		// should we register __ret var?
+		types = t.replace('MultiReturn_', '').replace('0ptr0', '*').split('_')
+	}
+	for i, name in names {
+		typ := types[i]
+		if names.len > 1 {
+			p.gen(';\n')
+			p.gen('$typ $name = ${mr_var_name}.var_$i')
+		}
+		// println('var decl tok=${p.strtok()} ismut=$is_mut')
+		var_scanner_pos := p.scanner.get_scanner_pos()
+		// name := p.check_name()
+		// p.var_decl_name = name
+		// Don't allow declaring a variable with the same name. Even in a child scope
+		// (shadowing is not allowed)
+		if !p.builtin_mod && p.cur_fn.known_var(name) {
+			// v := p.cur_fn.find_var(name)
+			p.error('redefinition of `$name`')
+		}
+		if name.len > 1 && contains_capital(name) {
+			p.error('variable names cannot contain uppercase letters, use snake_case instead')
+		}
+		// p.check_space(.decl_assign) // :=
+		// typ := p.gen_var_decl(name, is_static)
+		p.register_var(Var {
+			name: name
+			typ: typ
+			is_mut: is_mut
+			is_alloc: p.is_alloc || typ.starts_with('array_')
+			scanner_pos: var_scanner_pos
+			line_nr: var_scanner_pos.line_nr
+		})
+	}
 	//if p.is_alloc { println('REG VAR IS ALLOC $name') }
 	p.var_decl_name = ''
 	p.is_empty_c_struct_init = false
@@ -1371,11 +1444,12 @@ fn (p mut Parser) bterm() string {
 	mut typ := p.expression()
 	p.expected_type = typ
 	is_str := typ=='string'  &&   !p.is_sql
+	is_ustr := typ=='ustring'
 	tok := p.tok
 	// if tok in [ .eq, .gt, .lt, .le, .ge, .ne] {
 	if tok == .eq || tok == .gt || tok == .lt || tok == .le || tok == .ge || tok == .ne {
 		p.fgen(' ${p.tok.str()} ')
-		if is_str && !p.is_js {
+		if (is_str || is_ustr) && !p.is_js {
 			p.gen(',')
 		}
 		else if p.is_sql && tok == .eq {
@@ -1418,6 +1492,17 @@ fn (p mut Parser) bterm() string {
 			 Token.lt => p.cgen.set_placeholder(ph, 'string_lt(')
 */
 		}
+		if is_ustr {
+			p.gen(')')
+			switch tok {
+			case Token.eq: p.cgen.set_placeholder(ph, 'ustring_eq(')
+			case Token.ne: p.cgen.set_placeholder(ph, 'ustring_ne(')
+			case Token.le: p.cgen.set_placeholder(ph, 'ustring_le(')
+			case Token.ge: p.cgen.set_placeholder(ph, 'ustring_ge(')
+			case Token.gt: p.cgen.set_placeholder(ph, 'ustring_gt(')
+			case Token.lt: p.cgen.set_placeholder(ph, 'ustring_lt(')
+			}
+		}
 	}
 	return typ
 }
@@ -1425,6 +1510,7 @@ fn (p mut Parser) bterm() string {
 // also called on *, &, @, . (enum)
 fn (p mut Parser) name_expr() string {
 	p.has_immutable_field = false
+	p.is_const_literal = false
 	ph := p.cgen.add_placeholder()
 	// amp
 	ptr := p.tok == .amp
@@ -2041,15 +2127,55 @@ struct IndexCfg {
 	
 }
 
-// returns resulting type
-fn (p mut Parser) expression() string {
-	if p.scanner.file_path.contains('test_test') {
-		println('expression() pass=$p.pass tok=')
-		p.print_tok()
-	}
+// in and dot have higher priority than `!`
+fn (p mut Parser) indot_expr() string {
 	ph := p.cgen.add_placeholder()
 	mut typ := p.term()
+	if p.tok == .dot  {
+		for p.tok == .dot {
+			typ = p.dot(typ, ph)
+		}
+	}
+	// `a in [1, 2, 3]`
+	// `key in map`
+	if p.tok == .key_in {
+		p.fgen(' ')
+		p.check(.key_in)
+		p.fgen(' ')
+		p.gen('), ')
+		arr_typ := p.expression()
+		is_map := arr_typ.starts_with('map_')
+		if !arr_typ.starts_with('array_') && !is_map {
+			p.error('`in` requires an array/map')
+		}
+		T := p.table.find_type(arr_typ)
+		if !is_map && !T.has_method('contains') {
+			p.error('$arr_typ has no method `contains`')
+		}
+		// `typ` is element's type
+		if is_map {
+			p.cgen.set_placeholder(ph, '_IN_MAP( (')
+		}
+		else {
+			p.cgen.set_placeholder(ph, '_IN($typ, (')
+		}
+		p.gen(')')
+		return 'bool'
+	}
+	return typ
+}
+
+// returns resulting type
+fn (p mut Parser) expression() string {
+	p.is_const_literal = true
+	//if p.scanner.file_path.contains('test_test') {
+		//println('expression() pass=$p.pass tok=')
+		//p.print_tok()
+	//}
+	ph := p.cgen.add_placeholder()
+	mut typ := p.indot_expr()
 	is_str := typ=='string'
+	is_ustr := typ=='ustring'
 	// `a << b` ==> `array_push(&a, b)`
 	if p.tok == .left_shift {
 		if typ.contains('array_') {
@@ -2080,42 +2206,11 @@ fn (p mut Parser) expression() string {
 			return 'int'
 		}
 	}
-	// `a in [1, 2, 3]`
-	// `key in map`
-	if p.tok == .key_in {
-		p.fgen(' ')
-		p.check(.key_in)
-		p.fgen(' ')
-		p.gen('), ')
-		arr_typ := p.expression()
-		is_map := arr_typ.starts_with('map_')
-		if !arr_typ.starts_with('array_') && !is_map {
-			p.error('`in` requires an array/map')
-		}
-		T := p.table.find_type(arr_typ)
-		if !is_map && !T.has_method('contains') {
-			p.error('$arr_typ has no method `contains`')
-		}
-		// `typ` is element's type
-		if is_map {
-			p.cgen.set_placeholder(ph, '_IN_MAP( (')
-		}
-		else {
-			p.cgen.set_placeholder(ph, '_IN($typ, (')
-		}
-		p.gen(')')
-		return 'bool'
-	}
 	if p.tok == .righ_shift {
 		p.next()
 		p.gen(' >> ')
 		p.check_types(p.expression(), typ)
 		return 'int'
-	}
-	if p.tok == .dot  {
-		for p.tok == .dot {
-			typ = p.dot(typ, ph)
-		}
 	}
 	// + - | ^
 	for p.tok == .plus || p.tok == .minus || p.tok == .pipe || p.tok == .amp ||
@@ -2129,6 +2224,10 @@ fn (p mut Parser) expression() string {
 		p.check_space(p.tok)
 		if is_str && tok_op == .plus && !p.is_js {
 			p.cgen.set_placeholder(ph, 'string_add(')
+			p.gen(',')
+		}
+		else if is_ustr && tok_op == .plus {
+			p.cgen.set_placeholder(ph, 'ustring_add(')
 			p.gen(',')
 		}
 		// 3 + 4
@@ -2150,11 +2249,11 @@ fn (p mut Parser) expression() string {
 			}
 		}
 		p.check_types(p.term(), typ)
-		if is_str && tok_op == .plus && !p.is_js {
+		if (is_str || is_ustr) && tok_op == .plus && !p.is_js {
 			p.gen(')')
 		}
 		// Make sure operators are used with correct types
-		if !p.pref.translated && !is_str && !is_num {
+		if !p.pref.translated && !is_str && !is_ustr && !is_num {
 			T := p.table.find_type(typ)
 			if tok_op == .plus {
 				if T.has_method('+') {
@@ -2218,8 +2317,12 @@ fn (p mut Parser) unary() string {
 	case Token.not:
 		p.gen('!')
 		p.check(.not)
-		typ = 'bool'
-		p.bool_expression()
+		// typ should be bool type
+		typ = p.indot_expr()
+		if typ != 'bool' {
+			p.error('operator ! requires bool type, not `$typ`')
+		}
+
 	case Token.bit_not:
 		p.gen('~')
 		p.check(.bit_not)
@@ -2270,7 +2373,7 @@ fn (p mut Parser) factor() string {
 		p.fgen('sizeof(')
 		p.next()
 		p.check(.lpar)
-		mut sizeof_typ := p.get_type()		
+		mut sizeof_typ := p.get_type()
 		p.check(.rpar)
 		p.gen('$sizeof_typ)')
 		p.fgen('$sizeof_typ)')
@@ -2599,7 +2702,7 @@ fn (p mut Parser) map_init() string {
 			}
 		}
 		p.gen('new_map_init($i, sizeof($val_type), ' +
-			'(string[]){ $keys_gen }, ($val_type []){ $vals_gen } )')
+			'(string[$i]){ $keys_gen }, ($val_type [$i]){ $vals_gen } )')
 		typ := 'map_$val_type'
 		p.register_map(typ)
 		return typ
@@ -3475,7 +3578,27 @@ fn (p mut Parser) return_st() {
 			p.inside_return_expr = true
 			is_none := p.tok == .key_none
 			p.expected_type = p.cur_fn.typ
-			expr_type := p.bool_expression()
+			// expr_type := p.bool_expression()
+			mut expr_type := p.bool_expression()
+			mut types := []string
+			types << expr_type
+			for p.tok == .comma {
+				p.check(.comma)
+				types << p.bool_expression()
+			}
+			// multiple returns
+			if types.len > 1 {
+				expr_type = 'MultiReturn_' + types.join('_').replace('*', '0ptr0')
+				ret_vals := p.cgen.cur_line.right(ph)
+				mut ret_fields := ''
+				for ret_val_idx, ret_val in ret_vals.split(' ') {
+					if ret_val_idx > 0 {
+						ret_fields += ','
+					}
+					ret_fields += '.var_$ret_val_idx=$ret_val'
+				}
+				p.cgen.resetln('($expr_type){$ret_fields}')
+			}
 			p.inside_return_expr = false
 			// Automatically wrap an object inside an option if the function
 			// returns an option
@@ -3571,8 +3694,8 @@ fn (p mut Parser) go_statement() {
 
 fn (p mut Parser) register_var(v Var) {
 	if v.line_nr == 0 {
-		//v.line_nr = p.scanner.line_nr
-		p.cur_fn.register_var({ v | line_nr: p.scanner.line_nr })
+		spos := p.scanner.get_scanner_pos()
+		p.cur_fn.register_var({ v | scanner_pos: spos, line_nr: spos.line_nr })
 	} else {
 		p.cur_fn.register_var(v)
 	}

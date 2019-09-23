@@ -147,15 +147,10 @@ fn (v mut V) cc() {
 	cflags := v.get_os_cflags()
 
 	// add .o files
-	for flag in cflags {
-		if !flag.value.ends_with('.o') { continue }
-		a << flag.format()
-	}
+	a << cflags.c_options_only_object_files()
+	
 	// add all flags (-I -l -L etc) not .o files
-	for flag in cflags {
-		if flag.value.ends_with('.o') { continue }
-		a << flag.format()
-	}
+	a << cflags.c_options_without_object_files()
 	
 	a << libs
 	// Without these libs compilation will fail on Linux
@@ -274,12 +269,7 @@ fn (c mut V) cc_windows_cross() {
 	mut args := '-o $c.out_name -w -L. '
 	cflags := c.get_os_cflags()
 	// -I flags
-	for flag in cflags {
-		if flag.name != '-l' {
-				args += flag.format()
-				args += ' '
-		}
-	}
+	args += cflags.c_options_before_target()
 	mut libs := ''
 	if c.pref.build_mode == .default_mode {
 		libs = '"$ModPath/vlib/builtin.o"'
@@ -292,13 +282,7 @@ fn (c mut V) cc_windows_cross() {
 		}
 	}
 	args += ' $c.out_name_c '
-	// -l flags (libs)
-	for flag in cflags {
-		if flag.name == '-l' {
-				args += flag.format()
-				args += ' '
-		}
-	}
+	args += cflags.c_options_after_target()
 	println('Cross compiling for Windows...')
 	winroot := '$ModPath/winroot'
 	if !os.dir_exists(winroot) {
@@ -339,14 +323,15 @@ fn (c mut V) cc_windows_cross() {
 	println('Done!')
 }
 
-fn (c V) build_thirdparty_obj_files() {
+fn (c &V) build_thirdparty_obj_files() {
 	for flag in c.get_os_cflags() {
-		if flag.value.ends_with('.o') {
+		if flag.value.ends_with('.o') {			
+			rest_of_module_flags := c.get_rest_of_module_cflags( flag )
 			if c.os == .msvc {
-				build_thirdparty_obj_file_with_msvc(flag.value)
+				build_thirdparty_obj_file_with_msvc(flag.value, rest_of_module_flags)
 			}
 			else {
-				build_thirdparty_obj_file(flag.value)
+				build_thirdparty_obj_file(flag.value, rest_of_module_flags)
 			}
 		}
 	}
@@ -369,17 +354,23 @@ fn find_c_compiler_default() string {
 }
 
 fn find_c_compiler_thirdparty_options() string {
-	if '-m32' in os.args{
-		$if windows {
-			return '-m32'
-		}$else{
-			return '-fPIC -m32'
-		}
-	}else{
-		$if windows {
-			return ''
-		}$else{
-			return '-fPIC'
+	fullargs := env_vflags_and_os_args()
+	mut cflags := get_cmdline_cflags( fullargs )
+	$if !windows {
+		cflags += ' -fPIC'
+	}
+	if '-m32' in fullargs {
+		cflags += ' -m32'
+	}
+	return cflags
+}
+
+fn get_cmdline_cflags(args []string) string {
+	mut cflags := ''
+	for ci, cv in args {
+		if cv == '-cflags' {
+			cflags += args[ci+1] + ' '
 		}
 	}
+	return cflags
 }

@@ -71,7 +71,6 @@ mut:
 	ref             bool
 	parent_fn       string // Variables can only be defined in functions
 	mod             string // module where this var is stored
-	line_nr         int
 	access_mod      AccessMod
 	is_global       bool // __global (translated from C only)
 	is_used         bool
@@ -79,6 +78,8 @@ mut:
 	scope_level     int
 	is_c            bool // todo remove once `typ` is `Type`, not string
 	moved           bool
+	scanner_pos     ScannerPos // TODO: use only scanner_pos, remove line_nr
+	line_nr         int
 }
 
 struct Type {
@@ -609,6 +610,13 @@ fn (p mut Parser) _check_types(got_, expected_ string, throw bool) bool {
 	if expected=='void*' && got=='int' {
 		return true
 	}
+	// Allow `myu64 == 1`
+	//if p.fileis('_test') && is_number_type(got) && is_number_type(expected)  {
+		//p.warn('got=$got exp=$expected $p.is_const_literal')
+	//}
+	if is_number_type(got) && is_number_type(expected) && p.is_const_literal {
+		return true
+	}	
 	expected = expected.replace('*', '')
 	got = got.replace('*', '')
 	if got != expected {
@@ -667,6 +675,15 @@ fn (t &Table) main_exists() bool {
 		if f.name == 'main' {
 			return true
 		}
+	}
+	return false
+}
+
+fn (t &Table) has_at_least_one_test_fn() bool {
+	for _, f in t.fns {
+		if f.name.starts_with('test_') {
+			return true
+		}	
 	}
 	return false
 }
