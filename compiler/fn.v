@@ -63,16 +63,6 @@ fn (p &Parser) find_var_check_new_var(name string) ?Var {
 	return none
 }
 
-fn (f &Fn) find_var2(name string) Var {
-	for i in 0 .. f.var_idx {
-		if f.local_vars[i].name == name {
-			return f.local_vars[i]
-		}
-	}
-	return Var{}
-}
-
-
 fn (p mut Parser) open_scope() {
 	p.cur_fn.defer_text << ''
 	p.cur_fn.scope_level++
@@ -293,7 +283,7 @@ fn (p mut Parser) fn_decl() {
 				name: typ,
 				mod: p.mod
 			})
-			for i, t in typ.replace('MultiReturn_', '').replace('0ptr0', '*').split('_') {
+			for i, t in typ.replace('MultiReturn_', '').replace('_ZptrZ_', '*').split('_Z_') {
 				p.table.add_field(typ, 'var_$i', t, false, '', .public)
 			}
 			p.cgen.typedefs << 'typedef struct $typ $typ;'
@@ -730,12 +720,13 @@ fn (p mut Parser) fn_args(f mut Fn) {
 	if types_only {
 		for p.tok != .rpar {
 			typ := p.get_type()
+			p.check_and_register_used_imported_type(typ)
 			v := Var {
 				typ: typ
 				is_arg: true
 				// is_mut: is_mut
 				line_nr: p.scanner.line_nr
-				scanner_pos: p.scanner.get_scanner_pos()        
+				scanner_pos: p.scanner.get_scanner_pos()
 			}
 			// f.register_var(v)
 			f.args << v
@@ -761,6 +752,7 @@ fn (p mut Parser) fn_args(f mut Fn) {
 			p.next()
 		}
 		mut typ := p.get_type()
+		p.check_and_register_used_imported_type(typ)
 		if is_mut && is_primitive_type(typ) {
 			p.error('mutable arguments are only allowed for arrays, maps, and structs.' +
 			'\nreturn values instead: `foo(n mut int)` => `foo(n int) int`')
@@ -779,7 +771,7 @@ fn (p mut Parser) fn_args(f mut Fn) {
 				is_mut: is_mut
 				ptr: is_mut
 				line_nr: p.scanner.line_nr
-				scanner_pos: p.scanner.get_scanner_pos()        
+				scanner_pos: p.scanner.get_scanner_pos()
 			}
 			f.register_var(v)
 			f.args << v

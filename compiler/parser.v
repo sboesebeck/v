@@ -6,7 +6,6 @@ module main
 
 import (
 	os
-	rand
 	strings
 )
 
@@ -29,7 +28,7 @@ mut:
 	lit            string
 	cgen           &CGen
 	table          &Table
-	import_table   &FileImportTable // Holds imports for just the file being parsed
+	import_table   FileImportTable // Holds imports for just the file being parsed
 	pass           Pass
 	os             OS
 	mod            string
@@ -92,7 +91,7 @@ fn (v mut V) new_parser(path string) Parser {
 			break
 		}		
 	}
-	
+
 	mut p := Parser {
 		v: v
 		file_path: path
@@ -101,7 +100,7 @@ fn (v mut V) new_parser(path string) Parser {
 		file_pcguard: path_pcguard
 		scanner: new_scanner(path)
 		table: v.table
-		import_table: new_file_import_table(path)
+		import_table: v.table.get_file_import_table(path)
 		cur_fn: EmptyFn
 		cgen: v.cgen
 		is_script: (v.pref.is_script && path == v.dir)
@@ -186,7 +185,7 @@ fn (p mut Parser) parse(pass Pass) {
 			p.error('module `builtin` cannot be imported')
 		}
 		// save file import table
-		p.table.file_imports << *p.import_table
+		p.table.file_imports[p.file_path] = p.import_table
 		return
 	}
 	// Go through every top level token or throw a compilation error if a non-top level token is met
@@ -277,6 +276,9 @@ fn (p mut Parser) parse(pass Pass) {
 			if p.is_script && !p.pref.is_test {
 				p.set_current_fn( MainFn )
 				p.check_unused_variables()
+			}
+			if !p.first_pass() && !p.pref.is_repl {
+				p.check_unused_imports()
 			}
 			if false && !p.first_pass() && p.fileis('main.v') {
 				out := os.create('/var/tmp/fmt.v') or {
@@ -490,14 +492,17 @@ fn key_to_type_cat(tok Token) TypeCategory {
 // also unions and interfaces
 fn (p mut Parser) struct_decl() {
 	// V can generate Objective C for integration with Cocoa
-	// `[interface:ParentInterface]`
-	//is_objc := p.attr.starts_with('interface')
-	//objc_parent := if is_objc { p.attr.right(10) } else { '' }
+	// `[objc_interface:ParentInterface]`
+	is_objc := p.attr.starts_with('objc_interface')
+	objc_parent := if is_objc { p.attr.right(15) } else { '' }
 	// interface, union, struct
 	is_interface := p.tok == .key_interface
 	is_union := p.tok == .key_union
 	is_struct := p.tok == .key_struct
 	mut cat := key_to_type_cat(p.tok)
+	if is_objc {
+		cat = .objc_interface
+	}	
 	p.fgen(p.tok.str() + ' ')
 	// Get type name
 	p.next()
@@ -528,7 +533,11 @@ fn (p mut Parser) struct_decl() {
 	if p.pass == .decl && p.table.known_type_fast(typ) {
 		p.error('`$name` redeclared')
 	}
-	if !is_c {
+	if is_objc {
+		// Forward declaration of an Objective-C interface with `@class` :)
+		p.gen_typedef('@class $name;')
+	}	
+	else if !is_c {
 		kind := if is_union {'union'} else {'struct'}
 		p.gen_typedef('typedef $kind $name $name;')
 	}
@@ -542,6 +551,7 @@ fn (p mut Parser) struct_decl() {
 		typ.is_c = is_c
 		typ.is_placeholder = false
 		typ.cat = cat
+		typ.parent = objc_parent
 		p.table.rewrite_type(typ)
 	}
 	else {
@@ -550,6 +560,7 @@ fn (p mut Parser) struct_decl() {
 			mod: p.mod
 			is_c: is_c
 			cat: cat
+			parent: objc_parent
 		}
 	}
 	// Struct `C.Foo` declaration, no body
@@ -635,6 +646,7 @@ fn (p mut Parser) struct_decl() {
 		access_mod := if is_pub{AccessMod.public} else { AccessMod.private}
 		p.fgen(' ')
 		field_type := p.get_type()
+		p.check_and_register_used_imported_type(field_type)
 		is_atomic := p.tok == .key_atomic
 		if is_atomic {
 			p.next()
@@ -835,14 +847,12 @@ fn (p mut Parser) get_type() string {
 	mut typ := ''
 	// multiple returns
 	if p.tok == .lpar {
-		// if p.inside_tuple {
-		// 	p.error('unexpected (') 
-		// } 
+		// if p.inside_tuple {p.error('unexpected (')}
 		// p.inside_tuple = true 
 		p.check(.lpar) 
 		mut types := []string 
 		for {
-			types << p.get_type() 
+			types << p.get_type()
 			if p.tok != .comma {
 				break 
 			} 
@@ -850,7 +860,7 @@ fn (p mut Parser) get_type() string {
 		}
 		p.check(.rpar) 
 		// p.inside_tuple = false 
-		return 'MultiReturn_' + types.join('_').replace('*', '0ptr0')
+		return 'MultiReturn_' + types.join('_Z_').replace('*', '_ZptrZ_')
 	}
 	// fn type
 	if p.tok == .func {
@@ -1361,7 +1371,7 @@ fn (p mut Parser) var_decl() {
 	// multiple returns
 	if names.len > 1 {
 		// should we register __ret var?
-		types = t.replace('MultiReturn_', '').replace('0ptr0', '*').split('_')
+		types = t.replace('MultiReturn_', '').replace('_ZptrZ_', '*').split('_Z_')
 	}
 	for i, name in names {
 		typ := types[i]
@@ -1557,6 +1567,7 @@ fn (p mut Parser) name_expr() string {
 		mut mod := name
 		// must be aliased module
 		if name != p.mod && p.import_table.known_alias(name) {
+			p.import_table.register_used_import(name)
 			// we replaced "." with "_dot_" in p.mod for C variable names, do same here.
 			mod = p.import_table.resolve_alias(name).replace('.', '_dot_')
 		}
@@ -1713,12 +1724,6 @@ fn (p mut Parser) name_expr() string {
 				p.error('undefined: `$name`')
 			}
 			else {
-				if orig_name == 'i32' {
-					println('`i32` alias was removed, use `int` instead')
-				}
-				if orig_name == 'u8' {
-					println('`u8` alias was removed, use `byte` instead')
-				}
 				p.error('undefined: `$orig_name`')
 			}
 		} else {
@@ -2390,6 +2395,7 @@ fn (p mut Parser) factor() string {
 			if !('json' in p.table.imports) {
 				p.error('undefined: `json`, use `import json`')
 			}
+			p.import_table.register_used_import('json')
 			return p.js_decode()
 		}
 		//if p.fileis('orm_test') {
@@ -2849,42 +2855,11 @@ fn (p mut Parser) array_init() string {
 }
 
 fn (p mut Parser) struct_init(typ string) string {
-	//p.gen('/* struct init */')
 	p.is_struct_init = true
 	t := p.table.find_type(typ)
 	if p.gen_struct_init(typ, t) { return typ }
 	p.scanner.fmt_out.cut(typ.len)
 	ptr := typ.contains('*')
-	/*
-	if !ptr {
-		if p.is_c_struct_init {
-			// `face := C.FT_Face{}` => `FT_Face face;`
-			if p.tok == .rcbr {
-				p.is_empty_c_struct_init = true
-				p.check(.rcbr)
-				return typ
-			}
-			p.gen('(struct $typ) {')
-			p.is_c_struct_init = false
-		}
-		else {
-			p.gen('($typ /*str init */) {')
-		}
-	}
-	else {
-		// TODO tmp hack for 0 pointers init
-		// &User{!} ==> 0
-		if p.tok == .not {
-			p.next()
-			p.gen('0')
-			p.check(.rcbr)
-			return typ
-		}
-		p.is_alloc = true
-		//println('setting is_alloc=true (ret $typ)')
-		p.gen('($t.name*)memdup(&($t.name)  {')
-	}
-	*/
 	mut did_gen_something := false
 	// Loop thru all struct init keys and assign values
 	// u := User{age:20, name:'bob'}
@@ -3588,7 +3563,7 @@ fn (p mut Parser) return_st() {
 			}
 			// multiple returns
 			if types.len > 1 {
-				expr_type = 'MultiReturn_' + types.join('_').replace('*', '0ptr0')
+				expr_type = 'MultiReturn_' + types.join('_Z_').replace('*', '_ZptrZ_')
 				ret_vals := p.cgen.cur_line.right(ph)
 				mut ret_fields := ''
 				for ret_val_idx, ret_val in ret_vals.split(' ') {
@@ -3760,13 +3735,11 @@ fn (p mut Parser) js_decode() string {
 
 fn (p mut Parser) attribute() {
 	p.check(.lsbr)
-	if p.tok == .key_interface {
-		p.check(.key_interface)
+	p.attr = p.check_name()
+	if p.tok == .colon {
 		p.check(.colon)
-		p.attr = 'interface:' + p.check_name()
-	} else {
-		p.attr = p.check_name()
-	}
+		p.attr = p.attr + ':' + p.check_name()
+	}	
 	p.check(.rsbr)
 	if p.tok == .func || (p.tok == .key_pub && p.peek() == .func) {
 		p.fn_decl()
@@ -3803,3 +3776,29 @@ fn (p mut Parser) defer_st() {
 	p.cgen.resetln('')
 }
 
+fn (p mut Parser) check_and_register_used_imported_type(typ_name string) {
+	us_idx := typ_name.index('__')
+	if us_idx != -1 {
+		arg_mod := typ_name.left(us_idx)
+		if p.import_table.known_alias(arg_mod) {
+			p.import_table.register_used_import(arg_mod)
+		}
+	}
+}
+
+fn (p mut Parser) check_unused_imports() {
+	mut output := ''
+	for alias, mod in p.import_table.imports {
+		if !p.import_table.is_used_import(alias) {
+			mod_alias := if alias == mod { alias } else { '$alias ($mod)' }
+			output += '\n * $mod_alias'
+		}
+	}
+	if output == '' { return }
+	output = '$p.file_path: the following imports were never used:$output'
+	if p.pref.is_prod {
+		cerror(output)
+	} else {
+		println('warning: $output')
+	}
+}

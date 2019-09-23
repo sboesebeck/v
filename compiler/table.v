@@ -16,7 +16,7 @@ mut:
 	obf_ids      map[string]int // obf_ids['myfunction'] == 23
 	modules      []string // List of all modules registered by the application
 	imports      []string // List of all imports
-	file_imports []FileImportTable // List of imports for file
+	file_imports map[string]FileImportTable // List of imports for file
 	cflags       []CFlag  // ['-framework Cocoa', '-lglfw3']
 	fn_cnt       int //atomic
 	obfuscate    bool
@@ -31,9 +31,10 @@ mut:
 // Holds import information scoped to the parsed file
 struct FileImportTable {
 mut:
-	module_name string
-	file_path   string
-	imports     map[string]string
+	module_name  string
+	file_path    string
+	imports      map[string]string // alias => module
+	used_imports []string          // alias
 }
 
 enum AccessMod {
@@ -53,6 +54,7 @@ enum TypeCategory {
 	union_ // 5
 	c_struct
 	c_typedef
+	objc_interface // 8 Objective C @interface
 	array
 }
 
@@ -606,6 +608,11 @@ fn (p mut Parser) _check_types(got_, expected_ string, throw bool) bool {
 	// if expected == 'T' || expected.contains('<T>') {
 	// return true
 	// }
+	// TODO fn hack
+	if got.starts_with('fn ') && (expected.ends_with('fn') ||
+	expected.ends_with('Fn')) {
+		return true
+	}	
 	// Allow pointer arithmetic
 	if expected=='void*' && got=='int' {
 		return true
@@ -829,8 +836,20 @@ fn (table &Table) qualify_module(mod string, file_path string) string {
 	return mod
 }
 
-fn new_file_import_table(file_path string) &FileImportTable {
-	return &FileImportTable{
+fn (table &Table) get_file_import_table(file_path string) FileImportTable {
+	// if file_path.clone() in table.file_imports {
+	// 	return table.file_imports[file_path.clone()]
+	// }
+	// just get imports. memory error when recycling import table
+	mut fit := new_file_import_table(file_path)
+	if file_path in table.file_imports {
+		fit.imports = table.file_imports[file_path].imports
+	}
+	return fit
+}
+
+fn new_file_import_table(file_path string) FileImportTable {
+	return FileImportTable{
 		file_path: file_path
 		imports:   map[string]string
 	}
@@ -845,7 +864,9 @@ fn (fit mut FileImportTable) register_import(mod string) {
 }
 
 fn (fit mut FileImportTable) register_alias(alias string, mod string) {
-	if alias in fit.imports {
+	// NOTE: come back here
+	// if alias in fit.imports && fit.imports[alias] == mod {}
+	if alias in fit.imports && fit.imports[alias] != mod {
 		cerror('cannot import $mod as $alias: import name $alias already in use in "${fit.file_path}".')
 	}
 	if mod.contains('.internal.') {
@@ -878,6 +899,16 @@ fn (fit &FileImportTable) is_aliased(mod string) bool {
 
 fn (fit &FileImportTable) resolve_alias(alias string) string {
 	return fit.imports[alias]
+}
+
+fn (fit mut FileImportTable) register_used_import(alias string) {
+	if !(alias in fit.used_imports) {
+		fit.used_imports << alias
+	}
+}
+
+fn (fit &FileImportTable) is_used_import(alias string) bool {
+	return alias in fit.used_imports
 }
 
 fn (t &Type) contains_field_type(typ string) bool {
@@ -950,10 +981,11 @@ fn (table &Table) find_misspelled_imported_mod(name string, fit &FileImportTable
 	n1 := if name.starts_with('main.') { name.right(5) } else { name }
 	for alias, mod in fit.imports {
 		if (n1.len - alias.len > 2 || alias.len - n1.len > 2) { continue }
+		mod_alias := if alias == mod { alias } else { '$alias ($mod)' }
 		p := strings.dice_coefficient(n1, alias)
 		if p > closest {
 			closest = p
-			closest_mod = '$alias ($mod)'
+			closest_mod = '$mod_alias'
 		}
 	}
 	return if closest >= min_match { closest_mod } else { '' }
