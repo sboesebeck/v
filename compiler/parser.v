@@ -276,6 +276,8 @@ fn (p mut Parser) parse(pass Pass) {
 			p.cgen.consts << g
 		case Token.eof:
 			//p.log('end of parse()')
+			// TODO: check why this was added? everything seems to work
+			// without it, and it's already happening in fn_decl
 			// if p.is_script && !p.pref.is_test {
 			// 	p.set_current_fn( MainFn )
 			// 	p.check_unused_variables()
@@ -285,7 +287,7 @@ fn (p mut Parser) parse(pass Pass) {
 			}
 			if false && !p.first_pass() && p.fileis('main.v') {
 				out := os.create('/var/tmp/fmt.v') or {
-					cerror('failed to create fmt.v')
+					verror('failed to create fmt.v')
 					return
 				}
 				out.writeln(p.scanner.fmt_out.str())
@@ -488,7 +490,7 @@ fn key_to_type_cat(tok Token) TypeCategory {
 	case Token.key_union: return TypeCategory.union_
 	//Token.key_ => return .interface_
 	}
-	cerror('Unknown token: $tok')
+	verror('Unknown token: $tok')
 	return TypeCategory.builtin
 }
 
@@ -863,7 +865,7 @@ fn (p mut Parser) get_type() string {
 		}
 		p.check(.rpar)
 		// p.inside_tuple = false
-		return 'MultiReturn_' + types.join('_Z_').replace('*', '_ZptrZ_')
+		return '_V_MulRet_' + types.join('_V_').replace('*', '_PTR_')
 	}
 	// fn type
 	if p.tok == .func {
@@ -1113,11 +1115,7 @@ fn (p mut Parser) close_scope() {
 	mut i := p.var_idx - 1
 	for ; i >= 0; i-- {
 		v := p.local_vars[i]
-		//if p.cur_fn.name == 'main' {
-			//println('var in main $v.name $v.typ $v.is_alloc ptr=$v.ptr')
-		//}	
 		if v.scope_level ≠ p.cur_fn.scope_level {
-			// println('breaking. "$v.name" v.scope_level=$v.scope_level')
 			break
 		}
 		// Clean up memory, only do this if -autofree was passed for now
@@ -1127,14 +1125,16 @@ fn (p mut Parser) close_scope() {
 				free_fn = 'v_array_free'
 			} else if v.typ == 'string' {
 				free_fn = 'v_string_free'
-				continue
+				//if p.fileis('str.v') {
+					//println('freeing str $v.name')
+				//}
+				//continue
 			}	else if v.ptr || v.typ.ends_with('*') {
 				free_fn = 'v_ptr_free'
 				//continue
 			}	 else {
 				continue
 			}	
-			//if false && p.returns {
 			if p.returns {
 				if !v.is_returned && v.typ != 'FILE*' { //!v.is_c {
 					prev_line := p.cgen.lines[p.cgen.lines.len-2]
@@ -1366,16 +1366,19 @@ fn (p mut Parser) var_decl() {
 	// t := p.bool_expression()
 	p.var_decl_name = mr_var_name
 	t := p.gen_var_decl(mr_var_name, is_static)
-
 	mut types := [t]
 	// multiple returns
 	if names.len > 1 {
 		// should we register __ret var?
-		types = t.replace('MultiReturn_', '').replace('_ZptrZ_', '*').split('_Z_')
+		types = t.replace('_V_MulRet_', '').replace('_PTR_', '*').split('_V_')
 	}
 	for i, name in names {
 		typ := types[i]
 		if names.len > 1 {
+			if names.len != types.len {
+				mr_fn := p.cgen.cur_line.find_between('=', '(').trim_space()
+				p.error('assignment mismatch: ${names.len} variables but `$mr_fn` returns $types.len values.')
+			}
 			p.gen(';\n')
 			p.gen('$typ $name = ${mr_var_name}.var_$i')
 		}
@@ -1402,8 +1405,10 @@ fn (p mut Parser) var_decl() {
 			scanner_pos: var_scanner_pos
 			line_nr: var_scanner_pos.line_nr
 		})
+		//if p.fileis('str.v') {
+			//if p.is_alloc { println('REG VAR IS ALLOC $name') }
+		//}
 	}
-	//if p.is_alloc { println('REG VAR IS ALLOC $name') }
 	p.var_decl_name = ''
 	p.is_empty_c_struct_init = false
 }
@@ -2668,7 +2673,7 @@ fn (p mut Parser) string_expr() {
 		p.gen('_STR_TMP($format$args)')
 	}
 	else {
-		// Otherwise do ugly len counting + allocation + sprintf
+		// Otherwise do len counting + allocation + sprintf
 		p.gen('_STR($format$args)')
 	}
 }
@@ -3563,9 +3568,11 @@ fn (p mut Parser) return_st() {
 				p.check(.comma)
 				types << p.bool_expression()
 			}
+			mut cur_fn_typ_chk := p.cur_fn.typ
 			// multiple returns
 			if types.len > 1 {
-				expr_type = 'MultiReturn_' + types.join('_Z_').replace('*', '_ZptrZ_')
+				expr_type = types.join(',')
+				cur_fn_typ_chk = cur_fn_typ_chk.replace('_V_MulRet_', '').replace('_PTR_', '*').replace('_V_', ',')
 				ret_vals := p.cgen.cur_line.right(ph)
 				mut ret_fields := ''
 				for ret_val_idx, ret_val in ret_vals.split(' ') {
@@ -3574,7 +3581,7 @@ fn (p mut Parser) return_st() {
 					}
 					ret_fields += '.var_$ret_val_idx=$ret_val'
 				}
-				p.cgen.resetln('($expr_type){$ret_fields}')
+				p.cgen.resetln('($p.cur_fn.typ){$ret_fields}')
 			}
 			p.inside_return_expr = false
 			// Automatically wrap an object inside an option if the function
@@ -3618,7 +3625,7 @@ fn (p mut Parser) return_st() {
 					p.genln('return $tmp;')
 				}
 			}
-			p.check_types(expr_type, p.cur_fn.typ)
+			p.check_types(expr_type, cur_fn_typ_chk)
 		}
 	}
 	else {
@@ -3801,7 +3808,7 @@ fn (p mut Parser) check_unused_imports() {
 	if output == '' { return }
 	output = '$p.file_path: the following imports were never used:$output'
 	if p.pref.is_prod {
-		cerror(output)
+		verror(output)
 	} else {
 		println('warning: $output')
 	}
