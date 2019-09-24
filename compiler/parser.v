@@ -51,6 +51,8 @@ mut:
 	ptr_cast       bool
 	calling_c      bool
 	cur_fn         Fn
+	local_vars     []Var // local function variables
+	var_idx       int
 	returns        bool
 	vroot          string
 	is_c_struct_init bool
@@ -107,6 +109,7 @@ fn (v mut V) new_parser(path string) Parser {
 		pref: v.pref
 		os: v.os
 		vroot: v.vroot
+		local_vars: [Var{}].repeat(MaxLocalVars)
 			
 	}
 	$if js {
@@ -151,7 +154,7 @@ fn (p &Parser) log(s string) {
 
 fn (p mut Parser) parse(pass Pass) {
 	p.pass = pass
-	p.log('\nparse() run=$p.pass file=$p.file_name tok=${p.strtok()}')// , "script_file=", script_file)
+	//p.log('\nparse() run=$p.pass file=$p.file_name tok=${p.strtok()}')// , "script_file=", script_file)
 	// `module main` is not required if it's a single file program
 	if p.is_script || p.pref.is_test {
 		p.mod = 'main'
@@ -272,11 +275,11 @@ fn (p mut Parser) parse(pass Pass) {
 			g += '; // global'
 			p.cgen.consts << g
 		case Token.eof:
-			p.log('end of parse()')
-			if p.is_script && !p.pref.is_test {
-				p.set_current_fn( MainFn )
-				p.check_unused_variables()
-			}
+			//p.log('end of parse()')
+			// if p.is_script && !p.pref.is_test {
+			// 	p.set_current_fn( MainFn )
+			// 	p.check_unused_variables()
+			// }
 			if !p.first_pass() && !p.pref.is_repl {
 				p.check_unused_imports()
 			}
@@ -303,7 +306,7 @@ fn (p mut Parser) parse(pass Pass) {
 				if p.cur_fn.name == '' {
 					p.set_current_fn( MainFn )
 					if p.pref.is_repl {
-						p.cur_fn.clear_vars()
+						p.clear_vars()
 					}
 				}
 				mut start := p.cgen.lines.len
@@ -376,7 +379,7 @@ fn (p mut Parser) import_statement() {
 	if mod in p.table.imports {
 		return
 	}
-	p.log('adding import $mod')
+	//p.log('adding import $mod')
 	p.table.imports << mod
 	p.table.register_module(mod)
 	
@@ -466,7 +469,7 @@ fn (p mut Parser) interface_method(field_name, receiver string) &Fn {
 		is_method: true
 		receiver_typ: receiver
 	}
-	p.log('is interface. field=$field_name run=$p.pass')
+	//p.log('is interface. field=$field_name run=$p.pass')
 	p.fn_args(mut method)
 	if p.scanner.has_gone_over_line_end() {
 		method.typ = 'void'
@@ -848,18 +851,18 @@ fn (p mut Parser) get_type() string {
 	// multiple returns
 	if p.tok == .lpar {
 		// if p.inside_tuple {p.error('unexpected (')}
-		// p.inside_tuple = true 
-		p.check(.lpar) 
-		mut types := []string 
+		// p.inside_tuple = true
+		p.check(.lpar)
+		mut types := []string
 		for {
 			types << p.get_type()
 			if p.tok != .comma {
-				break 
-			} 
-			p.check(.comma) 
+				break
+			}
+			p.check(.comma)
 		}
-		p.check(.rpar) 
-		// p.inside_tuple = false 
+		p.check(.rpar)
+		// p.inside_tuple = false
 		return 'MultiReturn_' + types.join('_Z_').replace('*', '_ZptrZ_')
 	}
 	// fn type
@@ -1019,12 +1022,9 @@ fn (p mut Parser) get_type() string {
 		p.register_array(typ)
 	}
 	p.next()
-	if p.tok == .question || is_question {
+	if is_question {
 		typ = 'Option_$typ'
 		p.table.register_type_with_parent(typ, 'Option')
-		if p.tok == .question {
-			p.next()
-		}
 	}
 	// Because the code uses * to see if it's a pointer
 	if typ == 'byteptr' {
@@ -1056,7 +1056,7 @@ fn (p &Parser) print_tok() {
 
 // statements() returns the type of the last statement
 fn (p mut Parser) statements() string {
-	p.log('statements()')
+	//p.log('statements()')
 	typ := p.statements_no_rcbr()
 	if !p.inside_if_expr {
 		p.genln('}')
@@ -1110,9 +1110,9 @@ fn (p mut Parser) close_scope() {
 	// Move back `var_idx` (pointer to the end of the array) till we reach
 	// the previous scope level.  This effectivly deletes (closes) current
 	// scope.
-	mut i := p.cur_fn.var_idx - 1
+	mut i := p.var_idx - 1
 	for ; i >= 0; i-- {
-		v := p.cur_fn.local_vars[i]
+		v := p.local_vars[i]
 		//if p.cur_fn.name == 'main' {
 			//println('var in main $v.name $v.typ $v.is_alloc ptr=$v.ptr')
 		//}	
@@ -1152,7 +1152,7 @@ fn (p mut Parser) close_scope() {
 	}
 	p.cur_fn.scope_level--
 	p.cur_fn.defer_text = p.cur_fn.defer_text.left(p.cur_fn.scope_level + 1)
-	p.cur_fn.var_idx = i + 1
+	p.var_idx = i + 1
 	// println('close_scope new var_idx=$f.var_idx\n')
 }
 
@@ -1191,9 +1191,9 @@ fn (p mut Parser) statement(add_semi bool) string {
 			p.check(.colon)
 			return ''
 		}
-		// `a := 777` 
+		// `a := 777`
 		else if p.peek() == .decl_assign || p.peek() == .comma {
-			p.log('var decl')
+			//p.log('var decl')
 			p.var_decl()
 		}
 		else {
@@ -1385,7 +1385,7 @@ fn (p mut Parser) var_decl() {
 		// p.var_decl_name = name
 		// Don't allow declaring a variable with the same name. Even in a child scope
 		// (shadowing is not allowed)
-		if !p.builtin_mod && p.cur_fn.known_var(name) {
+		if !p.builtin_mod && p.known_var(name) {
 			// v := p.cur_fn.find_var(name)
 			p.error('redefinition of `$name`')
 		}
@@ -1563,7 +1563,7 @@ fn (p mut Parser) name_expr() string {
 	// module ?
 	// (Allow shadowing `gg = gg.newcontext(); gg.draw_triangle();` )
 	if p.peek() == .dot && ((name == p.mod && p.table.known_mod(name)) || p.import_table.known_alias(name))
-		&& !p.cur_fn.known_var(name) && !is_c {
+		&& !p.known_var(name) && !is_c {
 		mut mod := name
 		// must be aliased module
 		if name != p.mod && p.import_table.known_alias(name) {
@@ -1577,7 +1577,7 @@ fn (p mut Parser) name_expr() string {
 		p.fgen(name)
 		name = prepend_mod(mod, name)
 	}
-	else if !p.table.known_type(name) && !p.cur_fn.known_var(name) &&
+	else if !p.table.known_type(name) && !p.known_var(name) &&
 	!p.table.known_fn(name) && !p.table.known_const(name) && !is_c {
 		name = p.prepend_mod(name)
 	}
@@ -1713,7 +1713,7 @@ fn (p mut Parser) name_expr() string {
 				//f = p.table.find_fn(name)
 			}
 			// check for misspelled function / variable / module
-			suggested := p.table.identify_typo(name, p.cur_fn, p.import_table)
+			suggested := p.identify_typo(name, p.import_table)
 			if suggested != '' {
 				p.error('undefined: `$name`. did you mean:$suggested')
 			}
@@ -1752,7 +1752,7 @@ fn (p mut Parser) name_expr() string {
 	if f.typ == 'void' && !p.inside_if_expr {
 		// p.error('`$f.name` used as value')
 	}
-	p.log('calling function')
+	//p.log('calling function')
 	p.fn_call(f, 0, '', '')
 	// dot after a function call: `get_user().age`
 	if p.tok == .dot {
@@ -1763,7 +1763,7 @@ fn (p mut Parser) name_expr() string {
 		}
 		return typ
 	}
-	p.log('end of name_expr')
+	//p.log('end of name_expr')
 	
 	if f.typ.ends_with('*') {
 		p.is_alloc = true
@@ -1772,9 +1772,11 @@ fn (p mut Parser) name_expr() string {
 }
 
 fn (p mut Parser) var_expr(v Var) string {
-	p.log('\nvar_expr() v.name="$v.name" v.typ="$v.typ"')
+	//p.log('\nvar_expr() v.name="$v.name" v.typ="$v.typ"')
 	// println('var expr is_tmp=$p.cgen.is_tmp\n')
-	p.mark_var_used(v)
+	if !v.is_const {
+		p.mark_var_used(v)
+	}
 	fn_ph := p.cgen.add_placeholder()
 	p.expr_var = v
 	p.gen(p.table.var_cgen_name(v.name))
@@ -1809,7 +1811,7 @@ fn (p mut Parser) var_expr(v Var) string {
 		}
 		// println('dot #$dc')
 		typ = p.dot(typ, fn_ph)
-		p.log('typ after dot=$typ')
+		//p.log('typ after dot=$typ')
 		// print('tok after dot()')
 		// p.print_tok()
 		// dc++
@@ -2478,7 +2480,7 @@ fn (p mut Parser) assoc() string {
 	// println('assoc()')
 	p.next()
 	name := p.check_name()
-	var := p.cur_fn.find_var(name) or {
+	var := p.find_var(name) or {
 		p.error('unknown variable `$name`')
 		exit(1)
 	}	
@@ -3649,7 +3651,7 @@ fn (p mut Parser) go_statement() {
 	// Method
 	if p.peek() == .dot {
 		var_name := p.lit
-		v := p.cur_fn.find_var(var_name) or { return }
+		v := p.find_var(var_name) or { return }
 		p.mark_var_used(v)
 		p.next()
 		p.check(.dot)
@@ -3667,14 +3669,16 @@ fn (p mut Parser) go_statement() {
 	}
 }
 
+/*
 fn (p mut Parser) register_var(v Var) {
 	if v.line_nr == 0 {
 		spos := p.scanner.get_scanner_pos()
-		p.cur_fn.register_var({ v | scanner_pos: spos, line_nr: spos.line_nr })
+		p.register_var({ v | scanner_pos: spos, line_nr: spos.line_nr })
 	} else {
-		p.cur_fn.register_var(v)
+		p.register_var(v)
 	}
 }
+*/
 
 // user:=jsdecode(User, user_json_string)
 fn (p mut Parser) js_decode() string {
