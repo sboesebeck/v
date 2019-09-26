@@ -80,7 +80,7 @@ mut:
 	is_changed      bool
 	scope_level     int
 	is_c            bool // todo remove once `typ` is `Type`, not string
-	moved           bool
+	is_moved        bool
 	scanner_pos     ScannerPos // TODO: use only scanner_pos, remove line_nr
 	line_nr         int
 }
@@ -321,7 +321,8 @@ fn (table &Table) known_type(typ_ string) bool {
 }
 
 fn (table &Table) known_type_fast(t &Type) bool {
-	return t.name.len > 0 && !t.is_placeholder
+	return t.name != '' && !t.is_placeholder
+	
 }
 
 fn (t &Table) find_fn(name string) ?Fn {
@@ -870,7 +871,7 @@ fn (fit mut FileImportTable) register_alias(alias string, mod string) {
 	// NOTE: come back here
 	// if alias in fit.imports && fit.imports[alias] == mod {}
 	if alias in fit.imports && fit.imports[alias] != mod {
-		verror('cannot import $mod as $alias: import name $alias already in use in "${fit.file_path}".')
+		verror('cannot import $mod as $alias: import name $alias already in use in "${fit.file_path}"')
 	}
 	if mod.contains('.internal.') {
 		mod_parts := mod.split('.')
@@ -881,7 +882,7 @@ fn (fit mut FileImportTable) register_alias(alias string, mod string) {
 		}
 		internal_parent := internal_mod_parts.join('.')
 		if !fit.module_name.starts_with(internal_parent) {
-			verror('module $mod can only be imported internally by libs.')
+			verror('module $mod can only be imported internally by libs')
 		}
 	}
 	fit.imports[alias] = mod

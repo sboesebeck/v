@@ -241,7 +241,7 @@ fn (v mut V) compile() {
 	for file in v.files {
 		mut p := v.new_parser(file)
 		p.parse(.decl)
-		if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
+		//if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
 	}
 	// Main pass
 	cgen.pass = Pass.main
@@ -307,7 +307,7 @@ fn (v mut V) compile() {
 	for file in v.files {
 		mut p := v.new_parser(file)
 		p.parse(.main)
-		if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
+		//if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
 		// p.g.gen_x64()
 		// Format all files (don't format automatically generated vlib headers)
 		if !v.pref.nofmt && !file.contains('/vlib/') {
@@ -357,11 +357,6 @@ fn (v mut V) generate_main() {
 	// if v.build_mode in [.default, .embed_vlib] {
 	if v.pref.build_mode == .default_mode || v.pref.build_mode == .embed_vlib {
 		mut consts_init_body := cgen.consts_init.join_lines()
-		for imp in v.table.imports {
-			if imp == 'http' {
-				consts_init_body += '\n http__init_module();'
-			}
-		}
 		// vlib can't have `init_consts()`
 		cgen.genln('void init_consts() {
 #ifdef _WIN32
@@ -574,13 +569,13 @@ fn (v mut V) add_v_files_to_compile() {
 	for file in v.files {
 		mut p := v.new_parser(file)
 		p.parse(.imports)
-		if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
+		//if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
 	}
 	// Parse user imports
 	for file in user_files {
 		mut p := v.new_parser(file)
 		p.parse(.imports)
-		if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
+		//if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
 	}
 	// Parse lib imports
 /*
@@ -593,7 +588,7 @@ fn (v mut V) add_v_files_to_compile() {
 			import_path := '$ModPath/vlib/$mod_path'
 			vfiles := v.v_files_from_dir(import_path)
 			if vfiles.len == 0 {
-				verror('cannot import module $mod (no .v files in "$import_path").')
+				verror('cannot import module $mod (no .v files in "$import_path")')
 			}
 			// Add all imports referenced by these libs
 			for file in vfiles {
@@ -613,13 +608,13 @@ fn (v mut V) add_v_files_to_compile() {
 		import_path := v.find_module_path(mod)
 		vfiles := v.v_files_from_dir(import_path)
 		if vfiles.len == 0 {
-			verror('cannot import module $mod (no .v files in "$import_path").')
+			verror('cannot import module $mod (no .v files in "$import_path")')
 		}
 		// Add all imports referenced by these libs
 		for file in vfiles {
 			mut p := v.new_parser(file)
 			p.parse(.imports)
-			if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
+			//if p.pref.autofree {		p.scanner.text.free()		free(p.scanner)	}
 		}
 	}
 	if v.pref.is_verbose {
@@ -632,7 +627,7 @@ fn (v mut V) add_v_files_to_compile() {
 	deps_resolved := dep_graph.resolve()
 	if !deps_resolved.acyclic {
 		deps_resolved.display()
-		verror('Import cycle detected.')
+		verror('Import cycle detected')
 	}
 	// add imports in correct order
 	for mod in deps_resolved.imports() {
