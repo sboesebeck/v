@@ -96,8 +96,8 @@ mut:
 	scope_level     int
 	is_c            bool // todo remove once `typ` is `Type`, not string
 	is_moved        bool
-	scanner_pos     ScannerPos // TODO: use only scanner_pos, remove line_nr
 	line_nr         int
+	token_idx       int // this is a token index, which will be used by error reporting
 }
 
 struct Type {
@@ -126,6 +126,7 @@ struct TypeNode {
 	typ Type
 }
 
+/*
 // For debugging types
 fn (t Type) str() string {
 	mut s := 'type "$t.name" {'
@@ -146,6 +147,7 @@ fn (t Type) str() string {
 	s += '}\n'
 	return s
 }
+*/
 
 const (
 	CReserved = [
@@ -321,6 +323,8 @@ fn (p mut Parser) register_global(name, typ string) {
 	}
 }
 
+// Only for module functions, not methods.
+// That's why searching by fn name works.
 fn (t mut Table) register_fn(new_fn Fn) {
 	t.fns[new_fn.name] = new_fn
 }
@@ -469,14 +473,10 @@ fn (p mut Parser) add_method(type_name string, f Fn) {
 	}
 	// TODO table.typesmap[type_name].methods << f
 	mut t := p.table.typesmap[type_name]
-	if type_name == 'str' {
-		println(t.methods.len)
-	}	
-	
+	if f.name != 'str' && f in t.methods  {
+		p.error('redefinition of method `${type_name}.$f.name`')
+	}
 	t.methods << f
-	if type_name == 'str' {
-		println(t.methods.len)
-	}	
 	p.table.typesmap[type_name] = t
 }
 
@@ -698,7 +698,7 @@ fn (table &Table) is_interface(name string) bool {
 // Do we have fn main()?
 fn (t &Table) main_exists() bool {
 	for _, f in t.fns {
-		if f.name == 'main' {
+		if f.name == 'main__main' {
 			return true
 		}
 	}
@@ -707,7 +707,7 @@ fn (t &Table) main_exists() bool {
 
 fn (t &Table) has_at_least_one_test_fn() bool {
 	for _, f in t.fns {
-		if f.name.starts_with('test_') {
+		if f.name.starts_with('main__test_') {
 			return true
 		}	
 	}

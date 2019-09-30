@@ -29,7 +29,7 @@ enum BuildMode {
 const (
 	supported_platforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd',
 		'netbsd', 'dragonfly', 'msvc', 'android', 'js', 'solaris']
-	ModPath            = os.home_dir() + '/.vmodules/'
+	v_modules_path            = os.home_dir() + '/.vmodules/'
 )
 
 enum OS {
@@ -40,8 +40,8 @@ enum OS {
 	openbsd
 	netbsd
 	dragonfly
-	msvc
-	js
+	msvc // TODO not an OS
+	js // TODO
 	android
 	solaris
 }
@@ -74,7 +74,7 @@ mut:
 	vroot      string
 	mod        string  // module being built with -lib
 	parsers    []Parser
-	vgen_buf   strings.Builder
+	vgen_buf   strings.Builder // temporary buffer for generated V code (.str() etc)
 }
 
 struct Preferences {
@@ -105,6 +105,11 @@ mut:
 	building_v bool
 	autofree   bool
 	compress   bool
+	// Skips re-compilation of the builtin module
+	// to increase compilation time.
+	// This is on by default, since a vast majority of users do not
+	// work on the builtin module itself.
+	skip_builtin bool
 }
 
 fn main() {
@@ -143,19 +148,12 @@ fn main() {
 	// TODO quit if the compiler is too old
 	// u := os.file_last_mod_unix('v')
 	// If there's no tmp path with current version yet, the user must be using a pre-built package
-	// Copy the `vlib` directory to the tmp path.
-/*
-	// TODO
-	if !os.file_exists(TmpPath) && os.file_exists('vlib') {
-	}
-*/
+	//
 	// Just fmt and exit
 	if 'fmt' in args {
 		vfmt(args)
 		return
 	}
-	
-
 	// Construct the V object from command line arguments
 	mut v := new_v(args)
 	if args.join(' ').contains(' test v') {
@@ -238,6 +236,7 @@ fn (v mut V) compile() {
 		println('all .v files:')
 		println(v.files)
 	}
+	/*
 	if v.pref.is_debug {
 		println('\nparsers:')
 		for q in v.parsers {
@@ -248,6 +247,7 @@ fn (v mut V) compile() {
 			println(q)
 		}	
 	}
+	*/
 	// First pass (declarations)
 	for file in v.files {
 		for i, p in v.parsers {
@@ -335,7 +335,7 @@ fn (v mut V) compile() {
 		}
 	}
 	// parse generated V code (str() methods etc)
-	mut vgen_parser := v.new_parser_string_id(v.vgen_buf.str(), 'vgen')
+	mut vgen_parser := v.new_parser_string(v.vgen_buf.str(), 'vgen')
 	// free the string builder which held the generated methods
 	v.vgen_buf.free()
 	vgen_parser.parse(.main)
@@ -368,7 +368,7 @@ fn (v mut V) compile() {
 		}
 	}
 	$if js {
-		cgen.genln('main();')
+		cgen.genln('main__main();')
 	}	
 	cgen.save()
 	v.cc()
@@ -439,33 +439,51 @@ string _STR_TMP(const char *fmt, ...) {
 			// It can be skipped in single file programs
 			if v.pref.is_script {
 				//println('Generating main()...')
-				cgen.genln('int main() { init_consts();')
+				v.gen_main_start(true)
 				cgen.genln('$cgen.fn_main;')
-				cgen.genln('return 0; }')
+				v.gen_main_end('return 0')
 			}
 			else {
-				println('panic: function `main` is undeclared in the main module')
-				exit(1)
+				verror('function `main` is not declared in the main module')
 			}
 		}
 		else if v.pref.is_test {
 			if v.table.main_exists() {
 				verror('test files cannot have function `main`')
-			}	
-			// make sure there's at least on test function
+			}
 			if !v.table.has_at_least_one_test_fn() {
 				verror('test files need to have at least one test function')
-			}	
-			// Generate `main` which calls every single test function
-			cgen.genln('int main() { init_consts();')
+			}
+			// Generate a C `main`, which calls every single test function
+			v.gen_main_start(false)
 			for _, f in v.table.fns {
-				if f.name.starts_with('test_') {
+				if f.name.starts_with('main__test_') {
 					cgen.genln('$f.name();')
 				}
 			}
-			cgen.genln('return g_test_ok == 0; }')
+			v.gen_main_end('return g_test_ok == 0')
+		}
+		else if v.table.main_exists() {
+			v.gen_main_start(true)
+			cgen.genln('  main__main();')
+			v.gen_main_end('return 0')
 		}
 	}
+}
+
+fn (v mut V) gen_main_start(add_os_args bool){
+	v.cgen.genln('int main(int argc, char** argv) { ')
+	v.cgen.genln('  init_consts();')
+	if add_os_args && 'os' in v.table.imports {
+		v.cgen.genln('  os__args = os__init_os_args(argc, (byteptr*)argv);')
+	}
+	v.generate_hotcode_reloading_main_caller()
+	v.cgen.genln('')
+}
+fn (v mut V) gen_main_end(return_statement string){
+	v.cgen.genln('')
+	v.cgen.genln('  $return_statement;')
+	v.cgen.genln('}')
 }
 
 fn final_target_out_name(out_name string) string {
@@ -609,7 +627,7 @@ fn (v mut V) add_v_files_to_compile() {
 		for i := 0; i < v.table.imports.len; i++ {
 			mod := v.table.imports[i]
 			mod_path := v.module_path(mod)
-			import_path := '$ModPath/vlib/$mod_path'
+			import_path := '$v_modules_path/vlib/$mod_path'
 			vfiles := v.v_files_from_dir(import_path)
 			if vfiles.len == 0 {
 				verror('cannot import module $mod (no .v files in "$import_path")')
@@ -660,12 +678,13 @@ fn (v mut V) add_v_files_to_compile() {
 			continue
 		}
 		mod_path := v.find_module_path(mod)
-		// If we are in default mode, we don't parse vlib .v files, but header .vh files in
+		// If we are in default mode, we don't parse vlib .v files, but
+		// header .vh files in
 		// TmpPath/vlib
 		// These were generated by vfmt
 /*
 		if v.pref.build_mode == .default_mode || v.pref.build_mode == .build_module {
-			module_path = '$ModPath/vlib/$mod_p'
+			module_path = '$v_modules_path/vlib/$mod_p'
 		}
 */
 		if mod == 'builtin' { continue } // builtin files were already added
@@ -1004,12 +1023,12 @@ fn install_v(args[]string) {
 	if true {
 		//println('Building vget...')
 		os.chdir(vroot + '/tools')
-		vgetcompilation := os.exec('$vexec -o $vget vget.v') or {
+		vget_compilation := os.exec('$vexec -o $vget vget.v') or {
 			verror(err)
 			return
 		}
-		if vgetcompilation.exit_code != 0 {
-			verror( vgetcompilation.output )
+		if vget_compilation.exit_code != 0 {
+			verror( vget_compilation.output )
 			return
 		}
 	}
@@ -1021,6 +1040,22 @@ fn install_v(args[]string) {
 		verror( vgetresult.output )
 		return
 	}
+}
+
+fn (v &V) test_vget() {
+	/*
+	vexe := os.executable()
+	ret := os.system('$vexe install nedpals.args')
+	if ret != 0 {
+		println('failed to run v install')
+		exit(1)
+	}	
+	if !os.file_exists(v_modules_path + '/nedpals/args') {
+		println('v failed to install a test module')
+		exit(1)
+	}	
+	println('vget is OK')
+	*/
 }
 
 fn (v &V) test_v() {
@@ -1043,7 +1078,7 @@ fn (v &V) test_v() {
 	for dot_relative_file in test_files {		
 		relative_file := dot_relative_file.replace('./', '')
 		file := os.realpath( relative_file )
-		tmpcfilepath := file.replace('_test.v', '_test.tmp.c')
+		tmpc_filepath := file.replace('_test.v', '_test.tmp.c')
 		
 		mut cmd := '"$vexe" $joined_args -debug "$file"'
 		if os.user_os() == 'windows' { cmd = '"$cmd"' }
@@ -1063,7 +1098,7 @@ fn (v &V) test_v() {
 			tmark.ok()
 			println(tmark.step_message('$relative_file OK'))
 		}
-		os.rm( tmpcfilepath )
+		os.rm( tmpc_filepath )
 	}
 	tmark.stop()
 	println( tmark.total_message('running V tests') )
@@ -1072,8 +1107,11 @@ fn (v &V) test_v() {
 	examples := os.walk_ext('examples', '.v')
 	mut bmark := benchmark.new_benchmark()
 	for relative_file in examples {
+		if relative_file.contains('vweb') {
+			continue
+		}	
 		file := os.realpath( relative_file )
-		tmpcfilepath := file.replace('.v', '.tmp.c')
+		tmpc_filepath := file.replace('.v', '.tmp.c')
 		mut cmd := '"$vexe" $joined_args -debug "$file"'
 		if os.user_os() == 'windows' { cmd = '"$cmd"' }
 		bmark.step()
@@ -1091,10 +1129,12 @@ fn (v &V) test_v() {
 			bmark.ok()
 			println(bmark.step_message('$relative_file OK'))
 		}
-		os.rm(tmpcfilepath)
+		os.rm(tmpc_filepath)
 	}
 	bmark.stop()
 	println( bmark.total_message('building examples') )
+	
+	v.test_vget()
 	
 	if failed {
 		exit(1)
