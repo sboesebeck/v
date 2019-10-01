@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	Version = '0.1.20'
+	Version = '0.1.21'
 )
 
 enum BuildMode {
@@ -875,6 +875,7 @@ fn new_v(args[]string) &V {
 	'int.v',
 	'utf8.v',
 	'map.v',
+	'hashmap.v',
 	'option.v',
 	]
 	//println(builtins)
@@ -883,9 +884,17 @@ fn new_v(args[]string) &V {
 	//println('VROOT=$vroot')
 	// v.exe's parent directory should contain vlib
 	if !os.dir_exists(vroot) || !os.dir_exists(vroot + '/vlib/builtin') {
-		println('vlib not found. It should be next to the V executable. ')
-		println('Go to https://vlang.io to install V.')
-		exit(1)
+		println('vlib not found, downloading it...')
+		ret := os.system('git clone --depth=1 https://github.com/vlang/v .')
+		if ret != 0 {
+			println('failed to `git clone` vlib')
+			println('make sure you are online and have git installed')
+			exit(1)
+		}
+
+		//println('vlib not found. It should be next to the V executable. ')
+		//println('Go to https://vlang.io to install V.')
+		//exit(1)
 	}
 	//println('out_name:$out_name')
 	mut out_name_c := os.realpath( out_name ) + '.tmp.c'
@@ -1062,19 +1071,20 @@ fn (v &V) test_vget() {
 }
 
 fn (v &V) test_v() {
-	if !os.dir_exists('vlib') {
-		println('run "v test v" next to the vlib/ directory')
+	args := env_vflags_and_os_args()
+	vexe := os.executable()
+	parent_dir := os.dir(vexe)
+	if !os.dir_exists(parent_dir + '/vlib') {
+		println('vlib/ is missing, it must be next to the V executable')
 		exit(1)
 	}	
-	args := env_vflags_and_os_args()
-	vexe := args[0]
 	// Emily: pass args from the invocation to the test
 	// e.g. `v -g -os msvc test v` -> `$vexe -g -os msvc $file`
 	mut joined_args := args.right(1).join(' ')
 	joined_args = joined_args.left(joined_args.last_index('test'))
 	//	println('$joined_args')
 	mut failed := false
-	test_files := os.walk_ext('.', '_test.v')
+	test_files := os.walk_ext(parent_dir, '_test.v')
 
 	println('Testing...')
 	mut tmark := benchmark.new_benchmark()
@@ -1107,7 +1117,7 @@ fn (v &V) test_v() {
 	println( tmark.total_message('running V tests') )
 
 	println('\nBuilding examples...')
-	examples := os.walk_ext('examples', '.v')
+	examples := os.walk_ext(parent_dir + '/examples', '.v')
 	mut bmark := benchmark.new_benchmark()
 	for relative_file in examples {
 		if relative_file.contains('vweb') {
@@ -1136,9 +1146,7 @@ fn (v &V) test_v() {
 	}
 	bmark.stop()
 	println( bmark.total_message('building examples') )
-	
 	v.test_vget()
-	
 	if failed {
 		exit(1)
 	}
