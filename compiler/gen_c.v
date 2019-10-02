@@ -6,6 +6,11 @@ const (
 	dot_ptr = '->'
 )
 
+/*
+fn (p mut Parser) gen_or_else(pos int) string {
+}
+*/
+
 // returns the type of the new variable
 fn (p mut Parser) gen_var_decl(name string, is_static bool) string {
 	// Generate expression to tmp because we need its type first
@@ -69,10 +74,17 @@ fn (p mut Parser) gen_fn_decl(f Fn, typ, str_args string) {
 	p.genln('$dll_export_linkage$typ $fn_name_cgen($str_args) {')
 }
 
-// blank identifer assignment `_ = 111` 
+// blank identifer assignment `_ = 111`
 fn (p mut Parser) gen_blank_identifier_assign() {
+	assign_error_tok_idx := p.token_idx
 	p.check_name()
 	p.check_space(.assign)
+	expr := p.lit
+	is_indexer := p.peek() == .lsbr
+	is_fn_call := p.peek() == .lpar || (p.peek() == .dot && p.tokens[p.token_idx+2].tok == .lpar)
+	if !is_indexer && !is_fn_call {
+		p.error_with_token_index('assigning `$expr` to `_` is redundant', assign_error_tok_idx)
+	}
 	pos := p.cgen.add_placeholder()
 	mut typ := p.bool_expression()
 	tmp := p.get_tmp()
@@ -93,8 +105,13 @@ fn (p mut Parser) gen_blank_identifier_assign() {
 		p.genln('string err = $tmp . error;')
 		p.statements()
 		p.returns = false
+	} else {
+		if is_fn_call {
+			p.gen(';')
+		} else {
+			p.cgen.resetln('{$typ _ = $p.cgen.cur_line;}')
+		}
 	}
-	p.gen(';')
 }
 
 fn types_to_c(types []Type, table &Table) string {

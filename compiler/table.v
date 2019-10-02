@@ -238,7 +238,7 @@ fn new_table(obfuscate bool) &Table {
 	t.register_type('size_t')
 	t.register_type_with_parent('i8', 'int')
 	t.register_type_with_parent('byte', 'int')
-	t.register_type_with_parent('char', 'int') // for C functinos only, to avoid warnings
+	t.register_type_with_parent('char', 'int') // for C functions only, to avoid warnings
 	t.register_type_with_parent('i16', 'int')
 	t.register_type_with_parent('u16', 'u32')
 	t.register_type_with_parent('u32', 'int')
@@ -351,12 +351,11 @@ fn (table &Table) known_type(typ_ string) bool {
 
 fn (table &Table) known_type_fast(t &Type) bool {
 	return t.name != '' && !t.is_placeholder
-	
 }
 
 fn (t &Table) find_fn(name string) ?Fn {
 	f := t.fns[name]
-	if !isnil(f.name.str) {
+	if f.name.str != 0 { // TODO
 		return f
 	}
 	return none
