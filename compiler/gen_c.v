@@ -53,7 +53,15 @@ fn (p mut Parser) gen_var_decl(name string, is_static bool) string {
 	// `foo := C.Foo{}` => `Foo foo;`
 	if !p.is_empty_c_struct_init && !typ.starts_with('['){
 		nt_gen += '='
+	} else if typ.starts_with('[') && typ[ typ.len-1 ] != `*` {
+		// a fixed_array initializer, like `v := [1.1, 2.2]!!`
+		// ... should translate to the following in C `f32 v[2] = {1.1, 2.2};`
+		initializer := p.cgen.cur_line.right(pos)
+		if initializer.len > 0 {
+			p.cgen.resetln(' = {' + initializer.all_after('{') )
+		}
 	}
+
 	if is_static {
 		nt_gen = 'static $nt_gen'
 	}
@@ -205,10 +213,20 @@ fn (table mut Table) fn_gen_name(f &Fn) string {
 	}
 	// Obfuscate but skip certain names
 	// TODO ugly, fix
-	if table.obfuscate && f.name != 'main' && f.name != 'WinMain' && f.mod != 'builtin' && !f.is_c &&
-	f.mod != 'darwin' && f.mod != 'os' && !f.name.contains('window_proc') && f.name != 'gg__vec2' &&
-	f.name != 'build_token_str' && f.name != 'build_keys' && f.mod != 'json' &&
-	!name.ends_with('_str') && !name.contains('contains') {
+	// NB: the order here is from faster to potentially slower checks
+	if table.obfuscate && 
+		!f.is_c &&
+		f.name != 'main' && f.name != 'WinMain' && f.name != 'main__main' && 
+		f.name != 'gg__vec2' &&
+		f.name != 'build_token_str' && 
+		f.name != 'build_keys' && 
+		f.mod != 'builtin' && 
+		f.mod != 'darwin' && 
+		f.mod != 'os' && 
+		f.mod != 'json' &&
+		!f.name.contains('window_proc') && 
+		!name.ends_with('_str') && 
+		!name.contains('contains') {
 		mut idx := table.obf_ids[name]
 		// No such function yet, register it
 		if idx == 0 {
@@ -317,18 +335,15 @@ fn (p mut Parser) gen_array_init(typ string, no_alloc bool, new_arr_ph int, nr_e
 	if no_alloc {
 		new_arr += '_no_alloc'
 	}
-	if nr_elems == 0 && p.pref.ccompiler != 'tcc' {
-		p.gen(' 0 })')
+	if nr_elems == 0 {
+		p.gen(' TCCSKIP(0) })')
 	} else {
 		p.gen(' })')
 	}
 	// Need to do this in the second pass, otherwise it goes to the very top of the out.c file
-	if !p.first_pass() {
-		// Due to a tcc bug, the length needs to be specified.
-		// GCC crashes if it is.
-		cast := if p.pref.ccompiler == 'tcc' { '($typ[$nr_elems])' } else { '($typ[])' }
-		p.cgen.set_placeholder(new_arr_ph,		
-			'$new_arr($nr_elems, $nr_elems, sizeof($typ), $cast { ')
+	if !p.first_pass() {		
+		p.cgen.set_placeholder(new_arr_ph,
+			'$new_arr($nr_elems, $nr_elems, sizeof($typ), EMPTY_ARRAY_OF_ELEMS( $typ, $nr_elems ) { ')
 	}
 }	
 

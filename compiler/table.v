@@ -4,6 +4,7 @@
 
 module main
 
+import os
 import math
 import strings
 
@@ -688,6 +689,12 @@ fn (p mut Parser) check_types_no_throw(got, expected string) bool {
 	return p._check_types(got, expected, false)
 }
 
+fn (p mut Parser) check_types_with_token_index(got, expected string, var_token_idx int) {
+	if !p._check_types(got, expected, false) {
+		p.error_with_token_index('expected type `$expected`, but got `$got`', var_token_idx)
+	}
+}
+
 fn (p mut Parser) satisfies_interface(interface_name, _typ string, throw bool) bool {
 	int_typ := p.table.find_type(interface_name)
 	typ := p.table.find_type(_typ)
@@ -862,7 +869,7 @@ fn (table &Table) qualify_module(mod string, file_path string) string {
 	for m in table.imports {
 		if m.contains('.') && m.contains(mod) {
 			m_parts := m.split('.')
-			m_path := m_parts.join('/')
+			m_path := m_parts.join(os.PathSeparator)
 			if mod == m_parts[m_parts.len-1] && file_path.contains(m_path) {
 				return m
 			}
@@ -872,15 +879,10 @@ fn (table &Table) qualify_module(mod string, file_path string) string {
 }
 
 fn (table &Table) get_file_import_table(id string) FileImportTable {
-	// if file_path.clone() in table.file_imports {
-	// 	return table.file_imports[file_path.clone()]
-	// }
-	// just get imports. memory error when recycling import table
-	mut fit := new_file_import_table(id)
 	if id in table.file_imports {
-		fit.imports = table.file_imports[id].imports
+		return table.file_imports[id]
 	}
-	return fit
+	return new_file_import_table(id)
 }
 
 fn new_file_import_table(file_path string) FileImportTable {

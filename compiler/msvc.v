@@ -141,7 +141,7 @@ fn find_vs() ?VsInstallation {
 	// VSWhere is guaranteed to be installed at this location now
 	// If its not there then end user needs to update their visual studio 
 	// installation!
-	res := os.exec('""%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"') or {
+	res := os.exec('""%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"') or {
 		return error(err)
 	}
 	// println('res: "$res"')
@@ -230,8 +230,10 @@ pub fn (v mut V) cc_msvc() {
 	if v.pref.is_prod {
 		a << '/O2'
 		a << '/MD'
+		a << '/Zi'
+		a << '/DNDEBUG'
 	} else {
-		a << '/Z7'
+		a << '/Zi'
 		a << '/MDd'
 	}
 
@@ -320,12 +322,12 @@ pub fn (v mut V) cc_msvc() {
 	a << '/LIBPATH:"$r.ucrt_lib_path"'
 	a << '/LIBPATH:"$r.um_lib_path"'
 	a << '/LIBPATH:"$r.vs_lib_path"'
-	a << '/INCREMENTAL:NO' // Disable incremental linking
+	a << '/DEBUG:FULL' // required for prod builds to generate PDB
 
-	if !v.pref.is_prod {
-		a << '/DEBUG:FULL'
-	} else {
-		a << '/DEBUG:NONE'
+	if v.pref.is_prod {
+		a << '/INCREMENTAL:NO' // Disable incremental linking
+		a << '/OPT:REF'
+		a << '/OPT:ICF'
 	}
 
 	a << lib_paths
@@ -394,7 +396,7 @@ fn build_thirdparty_obj_file_with_msvc(path string, moduleflags []CFlag) {
 
 	btarget := moduleflags.c_options_before_target()
 	atarget := moduleflags.c_options_after_target()
-	cmd := '""$msvc.full_cl_exe_path" /volatile:ms /Z7 $include_string /c $btarget $cfiles $atarget /Fo"$obj_path""'
+	cmd := '""$msvc.full_cl_exe_path" /volatile:ms /Zi /DNDEBUG $include_string /c $btarget $cfiles $atarget /Fo"$obj_path""'
 	//NB: the quotes above ARE balanced.
 	println('thirdparty cmd line: $cmd')
 	res := os.exec(cmd) or {
