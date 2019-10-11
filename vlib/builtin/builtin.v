@@ -4,6 +4,24 @@
 
 module builtin
 
+fn builtin_init() int {
+	$if windows {	
+		if is_atty(0) {
+			C._setmode(C._fileno(C.stdin), C._O_U16TEXT)
+		} else {
+			C._setmode(C._fileno(C.stdin), C._O_U8TEXT)		
+		}
+		C._setmode(C._fileno(C.stdout), C._O_U8TEXT)
+		C.SetConsoleMode(C.GetStdHandle(C.STD_OUTPUT_HANDLE), C.ENABLE_PROCESSED_OUTPUT | 0x0004) // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+		C.setbuf(C.stdout,0)
+	}
+	return 1
+}
+
+const (
+	_ = builtin_init()
+)
+
 fn C.memcpy(byteptr, byteptr, int)
 fn C.memmove(byteptr, byteptr, int)
 //fn C.malloc(int) byteptr
@@ -57,7 +75,7 @@ pub fn print_backtrace(){
 }
 
 // replaces panic when -debug arg is passed
-fn _panic_debug(line_no int, file,  mod, fn_name, s string) {
+fn panic_debug(line_no int, file,  mod, fn_name, s string) {
 	println('================ V panic ================')
 	println('   module: $mod')
 	println(' function: ${fn_name}()')
@@ -158,7 +176,15 @@ fn memdup(src voidptr, sz int) voidptr {
 
 fn v_ptr_free(ptr voidptr) {
 	C.free(ptr)
-}	
+}
 
-
+pub fn is_atty(fd int) bool {
+	$if windows {
+		mut mode := 0
+		C.GetConsoleMode(C._get_osfhandle(fd), &mode)
+		return mode > 0
+	} $else {
+		return C.isatty(fd) != 0
+	}
+}
 

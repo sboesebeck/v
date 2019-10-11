@@ -69,11 +69,6 @@ fn C.ftell(fp voidptr) int
 fn C.getenv(byteptr) byteptr
 fn C.sigaction(int, voidptr, int)
 
-fn parse_windows_cmd_line(cmd byteptr) []string {
-	s := string(cmd)
-	return s.split(' ')
-}
-
 // read_file reads the file in `path` and returns the contents.
 pub fn read_file(path string) ?string {
 	mode := 'rb'
@@ -338,6 +333,7 @@ pub fn exec(cmd string) ?Result {
 	}
 }
 
+// `system` works like `exec()`, but only returns a return code.
 pub fn system(cmd string) int {
 	mut ret := int(0)
 	$if windows {
@@ -530,23 +526,28 @@ pub fn get_line() string {
 
 // get_raw_line returns a one-line string from stdin along with '\n' if there is any
 pub fn get_raw_line() string {
-	$if windows {
+    $if windows {
         max_line_chars := 256
         buf := &byte(malloc(max_line_chars*2))
+        if is_atty(0) {
+            h_input := C.GetStdHandle(STD_INPUT_HANDLE)
+            mut nr_chars := 0
+            C.ReadConsole(h_input, buf, max_line_chars * 2, &nr_chars, 0)
+            return string_from_wide2(&u16(buf), nr_chars)
+        }
         res := int( C.fgetws(buf, max_line_chars, C.stdin ) )
         len := int(  C.wcslen(&u16(buf)) )
         if 0 != res { return string_from_wide2( &u16(buf), len ) }
         return ''
+    } $else {
+        max := size_t(256)
+        buf := *char(malloc(int(max)))
+        nr_chars := C.getline(&buf, &max, stdin)
+        if nr_chars == 0 {
+            return ''
+        }
+        return string(byteptr(buf), nr_chars)
     }
-	$else {
-		max := size_t(256)
-		buf := *char(malloc(int(max)))
-		nr_chars := C.getline(&buf, &max, stdin)
-		if nr_chars == 0 {
-			return ''
-		}
-		return string(byteptr(buf), nr_chars)
-	}
 }
 
 pub fn get_lines() []string {
@@ -856,3 +857,4 @@ pub fn print_backtrace() {
 	# backtrace_symbols_fd(buffer, nptrs, STDOUT_FILENO) ;
 */
 }
+

@@ -41,6 +41,12 @@ fn (p mut Parser) comp_time() {
 			p.statements_no_rcbr()
 			p.genln('#endif')
 		}
+		else if name == 'tinyc' {
+			p.genln('#ifdef __TINYC__')
+			p.check(.lcbr)
+			p.statements_no_rcbr()
+			p.genln('#endif')
+		}
 		else {
 			println('Supported platforms:')
 			println(supported_platforms)
@@ -144,9 +150,8 @@ fn (p mut Parser) comp_time() {
 // #include, #flag, #v
 fn (p mut Parser) chash() {
 	hash := p.lit.trim_space()
-	// println('chsh() file=$p.file  is_sig=${p.is_sig()} hash="$hash"')
+	// println('chsh() file=$p.file  hash="$hash"')
 	p.next()
-	is_sig := p.is_sig()
 	if hash.starts_with('flag ') {
 		mut flag := hash.right(5)
 		// expand `@VROOT` `@VMOD` to absolute path
@@ -157,7 +162,7 @@ fn (p mut Parser) chash() {
 		return
 	}
 	if hash.starts_with('include') {
-		if p.first_pass() && !is_sig {
+		if p.first_pass() && !p.is_vh {
 			if p.file_pcguard.len != 0 {
 				//println('p: $p.file_platform $p.file_pcguard')
 				p.cgen.includes << '$p.file_pcguard\n#$hash\n#endif'

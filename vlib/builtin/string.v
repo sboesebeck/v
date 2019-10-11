@@ -201,7 +201,11 @@ pub fn (s string) u32() u32 {
 }
 
 pub fn (s string) u64() u64 {
-	return C.strtoull(*char(s.str), 0, 0)
+	//$if tinyc {
+		//return u64(s.int()) // TODO
+	//} $else {
+		return C.strtoull(*char(s.str), 0, 0)
+	//}
 	//return C.atoll(s.str) // temporary fix for tcc on windows.
 }
 
@@ -504,6 +508,24 @@ pub fn (s string) index_after(p string, start int) int {
 			return i
 		}
 		i++
+	}
+	return -1
+}
+
+pub fn (s string) index_byte(c byte) int {
+	for i:=0; i<s.len; i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+pub fn (s string) last_index_byte(c byte) int {
+	for i:=s.len-1; i>=0; i-- {
+		if s[i] == c {
+			return i
+		}
 	}
 	return -1
 }
