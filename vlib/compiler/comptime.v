@@ -202,17 +202,13 @@ fn (p mut Parser) chash() {
 	else if hash.contains('embed') {
 		pos := hash.index('embed') + 5
 		file := hash.right(pos)
-		if p.pref.build_mode != BuildMode.default_mode {
+		if p.pref.build_mode != .default_mode {
 			p.genln('#include $file')
 		}
 	}
 	else if hash.contains('define') {
 		// Move defines on top
 		p.cgen.includes << '#$hash'
-	}
-	else if hash == 'v' {
-		println('v script')
-		//p.v_script = true
 	}
 	// Don't parse a non-JS V file (`#-js` flag)
 	else if hash == '-js'  {
@@ -273,7 +269,10 @@ fn (p mut Parser) gen_array_str(typ Type) {
 	})
 	elm_type := typ.name.right(6)
 	elm_type2 := p.table.find_type(elm_type)
-	if p.typ_to_fmt(elm_type, 0) == '' &&
+	is_array := elm_type.starts_with('array_')
+	if is_array {
+		p.gen_array_str(elm_type2)
+	} else if p.typ_to_fmt(elm_type, 0) == '' &&
 		!p.table.type_has_method(elm_type2, 'str') {
 		p.error('cant print ${elm_type}[], unhandled print of ${elm_type}')
 	}
