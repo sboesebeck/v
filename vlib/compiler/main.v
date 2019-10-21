@@ -89,14 +89,14 @@ pub mut:
 	is_run        bool
 	show_c_cmd    bool   // `v -show_c_cmd` prints the C command to build program.v.c
 	sanitize      bool   // use Clang's new "-fsanitize" option
-	
+
 	is_debug      bool   // false by default, turned on by -g or -cg, it tells v to pass -g to the C backend compiler.
 	is_vlines     bool   // turned on by -g, false by default (it slows down .tmp.c generation slightly).
 	is_keep_c     bool   // -keep_c , tell v to leave the generated .tmp.c alone (since by default v will delete them after c backend finishes)
 	// NB: passing -cg instead of -g will set is_vlines to false and is_g to true, thus making v generate cleaner C files,
 	// which are sometimes easier to debug / inspect manually than the .tmp.c files by plain -g (when/if v line number generation breaks).
 	is_cache      bool   // turns on v usage of the module cache to speed up compilation.
-	
+
 	is_stats      bool   // `v -stats file_test.v` will produce more detailed statistics for the tests that were run
 	no_auto_free  bool   // `v -nofree` disable automatic `free()` insertion for better performance in some applications  (e.g. compilers)
 	cflags        string // Additional options which will be passed to the C compiler.
@@ -114,9 +114,10 @@ pub mut:
 }
 
 // Should be called by main at the end of the compilation process, to cleanup
-pub fn (v mut V) finalize_compilation(){	
+pub fn (v mut V) finalize_compilation(){
 	// TODO remove
 	if v.pref.autofree {
+		/*
 		println('started freeing v struct')
 		v.table.typesmap.free()
 		v.table.obf_ids.free()
@@ -126,12 +127,13 @@ pub fn (v mut V) finalize_compilation(){
 			//f.local_vars.free()
 			f.args.free()
 			//f.defer_text.free()
-		}	
+		}
 		v.table.fns.free()
 		free(v.table)
-		//for p in parsers {}	
+		//for p in parsers {}
 		println('done!')
-	}	
+		*/
+	}
 }
 
 pub fn (v mut V) add_parser(parser Parser) {
@@ -142,7 +144,7 @@ pub fn (v &V) get_file_parser_index(file string) ?int {
 	for i, p in v.parsers {
 		if os.realpath(p.file_path_id) == os.realpath(file) {
 			return i
-		}	
+		}
 	}
 	return error('parser for "$file" not found')
 }
@@ -184,11 +186,11 @@ pub fn (v mut V) compile() {
 		println('\nparsers:')
 		for q in v.parsers {
 			println(q.file_name)
-		}	
+		}
 		println('\nfiles:')
 		for q in v.files {
 			println(q)
-		}	
+		}
 	}
 	*/
 	// First pass (declarations)
@@ -251,7 +253,7 @@ pub fn (v mut V) compile() {
 	mut defs_pos := cgen.lines.len - 1
 	if defs_pos == -1 {
 		defs_pos = 0
-	}	
+	}
 	cgen.nogen = q
 	for file in v.files {
 		v.parse(file, .main)
@@ -272,7 +274,7 @@ pub fn (v mut V) compile() {
 	v.vgen_buf.free()
 	vgen_parser.parse(.main)
 	// v.parsers.add(vgen_parser)
-	
+
 	// All definitions
 	mut def := strings.new_builder(10000)// Avoid unnecessary allocations
 	$if !js {
@@ -303,7 +305,7 @@ pub fn (v mut V) compile() {
 	}
 	$if js {
 		cgen.genln('main__main();')
-	}	
+	}
 	cgen.save()
 	v.cc()
 }
@@ -420,13 +422,13 @@ pub fn (v mut V) generate_main() {
 			}
 			// Generate a C `main`, which calls every single test function
 			v.gen_main_start(false)
-			
+
 			if v.pref.is_stats { cgen.genln('BenchedTests bt = main__start_testing();') }
-			
+
 			for _, f in v.table.fns {
 				if f.name.starts_with('main__test_') {
 					if v.pref.is_stats { cgen.genln('BenchedTests_testing_step_start(&bt, tos3("$f.name"));') }
-					cgen.genln('$f.name();')					
+					cgen.genln('$f.name();')
 					if v.pref.is_stats { cgen.genln('BenchedTests_testing_step_end(&bt);') }
 				}
 			}
@@ -471,7 +473,7 @@ pub fn final_target_out_name(out_name string) string {
 pub fn (v V) run_compiled_executable_and_exit() {
 	if v.pref.is_verbose {
 		println('============ running $v.out_name ============')
-	}	
+	}
 	mut cmd := '"' + final_target_out_name(v.out_name).replace('.exe','') + '"'
 	if os.args.len > 3 {
 		cmd += ' ' + os.args.right(3).join(' ')
@@ -495,11 +497,15 @@ pub fn (v V) run_compiled_executable_and_exit() {
 pub fn (v &V) v_files_from_dir(dir string) []string {
 	mut res := []string
 	if !os.file_exists(dir) {
-		verror("$dir doesn't exist!")
+		if dir == 'compiler' && os.dir_exists('vlib') {
+			println('looks like you are trying to build V with an old command')
+			println('use `v v.v` instead of `v -o v compiler`')
+		}	
+		verror("$dir doesn't exist")
 	} else if !os.dir_exists(dir) {
 		verror("$dir isn't a directory")
 	}
-	mut files := os.ls(dir)
+	mut files := os.ls(dir) or { panic(err) }
 	if v.pref.is_verbose {
 		println('v_files_from_dir ("$dir")')
 	}
@@ -560,7 +566,8 @@ pub fn (v mut V) add_v_files_to_compile() {
 			v.log('imports0:')
 			println(v.table.imports)
 			println(v.files)
-			p.import_table.register_alias('os', 'os', 0)
+			p.import_table.register_import('os', 0)
+			v.table.file_imports[p.file_path_id] = p.import_table
 			p.table.imports << 'os'
 			p.table.register_module('os')
 			println('got v script')
@@ -587,7 +594,7 @@ pub fn (v mut V) add_v_files_to_compile() {
 			mod_path := mod.replace('.', os.path_separator)
 			vh_path := '$v_modules_path${os.path_separator}vlib${os.path_separator}${mod_path}.vh'
 			if v.pref.is_cache && os.file_exists(vh_path) {
-				println('using cached module `$mod`: $vh_path')
+				eprintln('using cached module `$mod`: $vh_path')
 				v.cached_mods << mod
 				v.files << vh_path
 				continue
@@ -626,7 +633,7 @@ pub fn (v &V)  get_user_files() []string {
 		user_files << os.join(v.vroot, 'vlib', 'benchmark', 'tests',
 			'always_imported.v')
 	}
-	
+
 	// v volt/slack_test.v: compile all .v files to get the environment
 	// I need to implement user packages! TODO
 	is_test_with_imports := dir.ends_with('_test.v') &&
@@ -749,14 +756,14 @@ pub fn new_v(args[]string) &V {
 		os.mkdir(v_modules_path)
 		os.mkdir('$v_modules_path${os.path_separator}cache')
 	}
-	
+
 	mut vgen_buf := strings.new_builder(1000)
 	vgen_buf.writeln('module main\nimport strings')
-	
+
 	joined_args := args.join(' ')
 	target_os := get_arg(joined_args, 'os', '')
 	mut out_name := get_arg(joined_args, 'o', 'a.out')
-	
+
 	mut dir := args.last()
 	if 'run' in args {
 		dir = get_param_after(joined_args, 'run', '')
@@ -886,7 +893,7 @@ pub fn new_v(args[]string) &V {
 		is_vlines:     '-g' in args && !('-cg' in args)
 		is_keep_c:     '-keep_c' in args
 		is_cache:      '-cache' in args
-				
+
 		is_stats: '-stats' in args
 		obfuscate: obfuscate
 		is_prof: '-prof' in args

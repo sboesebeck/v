@@ -41,17 +41,17 @@ fn (p mut Parser) comp_time() {
 						stack++
 					} else if p.tok == .rcbr {
 						stack--
-					}	
+					}
 					if p.tok == .eof {
 						break
-					}	
+					}
 					if stack <= 0 && p.tok == .rcbr {
 						//p.warn('exiting $stack')
 						p.next()
 						break
-					}	
+					}
 					p.next()
-				}	
+				}
 			}	 else {
 				p.statements_no_rcbr()
 			}
@@ -179,12 +179,17 @@ fn (p mut Parser) chash() {
 	// println('chsh() file=$p.file  hash="$hash"')
 	p.next()
 	if hash.starts_with('flag ') {
-		mut flag := hash.right(5)
-		// expand `@VROOT` `@VMOD` to absolute path
-		flag = flag.replace('@VROOT', p.vroot)
-		flag = flag.replace('@VMOD', v_modules_path)
-		//p.log('adding flag "$flag"')
-		p.table.parse_cflag(flag, p.mod)
+		if p.first_pass() {
+			mut flag := hash.right(5)
+			// expand `@VROOT` `@VMOD` to absolute path
+			flag = flag.replace('@VROOT', p.vroot)
+			flag = flag.replace('@VMOD', v_modules_path)
+			//p.log('adding flag "$flag"')
+			_ = p.table.parse_cflag(flag, p.mod) or {
+				p.error_with_token_index(err, p.cur_tok_index()-1)
+				return
+			}
+		}
 		return
 	}
 	if hash.starts_with('include') {
@@ -215,16 +220,16 @@ fn (p mut Parser) chash() {
 		$if js {
 			for p.tok != .eof {
 				p.next()
-			}	
+			}
 		} $else {
 			p.next()
-		}	
+		}
 	}
 	else {
 		$if !js {
 			if !p.can_chash {
 				println('hash="$hash"')
-				println(hash.starts_with('include'))
+				if hash.starts_with('include') { println("include") } else {} 
 				p.error('bad token `#` (embedding C code is no longer supported)')
 			}
 		}
@@ -303,7 +308,7 @@ fn (p mut Parser) gen_struct_str(typ Type) {
 		is_public: true
 		receiver_typ: typ.name
 	})
-	
+
 	mut sb := strings.new_builder(typ.fields.len * 20)
 	sb.writeln('fn (a $typ.name) str() string {\nreturn')
 	sb.writeln("'{")
@@ -317,4 +322,44 @@ fn (p mut Parser) gen_struct_str(typ Type) {
 	// at the top of the file.
 	// This function will get parsee by V after the main pass.
 	p.cgen.fns << 'string ${typ.name}_str();'
+}
+
+fn (p mut Parser) gen_array_filter(str_typ string, method_ph int) {
+	/*
+		// V
+		a := [1,2,3,4]
+		b := a.filter(it % 2 == 0)
+		
+		// C
+		array_int a = ...;
+		array_int tmp2 = new_array(0, 4, 4);
+		for (int i = 0; i < a.len; i++) {
+			int it = ((int*)a.data)[i];
+			if (it % 2 == 0) array_push(&tmp2, &it);
+		}
+		array_int b = tmp2;
+	*/
+	val_type:=str_typ.right(6)
+	p.open_scope()
+	p.register_var(Var{
+		name: 'it'
+		typ: val_type
+	})
+	p.next()
+	p.check(.lpar)
+	p.cgen.resetln('')
+	tmp := p.get_tmp()
+	a := p.expr_var.name
+	p.cgen.set_placeholder(method_ph,'\n$str_typ $tmp = new_array(0, $a .len,sizeof($val_type));\n')
+	p.genln('for (int i = 0; i < ${a}.len; i++) {')
+	p.genln('$val_type it = (($val_type*)${a}.data)[i];')
+	p.gen('if (')
+	p.bool_expression()
+	p.genln(') array_push(&$tmp, &it);')
+	//p.genln(') array_push(&$tmp, &((($val_type*)${a}.data)[i]));')
+	//p.genln(') array_push(&$tmp, ${a}.data + i * ${a}.element_size);')
+	p.genln('}')
+	p.gen(tmp) // TODO why does this `gen()` work?
+	p.check(.rpar)
+	p.close_scope()
 }

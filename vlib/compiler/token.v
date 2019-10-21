@@ -93,6 +93,7 @@ enum TokenKind {
 	key_import_const
 	key_in
 	key_interface
+	//key_it
 	key_match
 	key_module
 	key_mut
@@ -109,6 +110,7 @@ enum TokenKind {
 	key_union
 	key_pub
 	key_static
+	key_unsafe
 	keyword_end
 }
 
@@ -189,6 +191,7 @@ fn build_token_str() []string {
 	s[TokenKind.key_assert] = 'assert'
 	s[TokenKind.key_struct] = 'struct'
 	s[TokenKind.key_if] = 'if'
+	//s[TokenKind.key_it] = 'it'
 	s[TokenKind.key_else] = 'else'
 	s[TokenKind.key_return] = 'return'
 	s[TokenKind.key_module] = 'module'
@@ -208,6 +211,7 @@ fn build_token_str() []string {
 	s[TokenKind.key_break] = 'break'
 	s[TokenKind.key_import] = 'import'
 	s[TokenKind.key_embed] = 'embed'
+	s[TokenKind.key_unsafe] = 'unsafe'
 	//Tokens[key_typeof] = 'typeof'
 	s[TokenKind.key_default] = 'default'
 	s[TokenKind.key_enum] = 'enum'
