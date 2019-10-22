@@ -12,8 +12,10 @@ const (
 	MaxLocalVars = 50
 )
 
+
 struct Fn {
 	// addr int
+pub:
 mut:
 	name          string
 	mod           string
@@ -48,6 +50,11 @@ mut:
 	inst 	map[string]string
 	done	bool
 }
+
+const (
+	EmptyFn = Fn{}
+	MainFn = Fn{ name: 'main' }
+)
 
 fn (a []TypeInst) str() string {
 	mut r := []string
@@ -637,7 +644,7 @@ fn (p mut Parser) async_fn_call(f Fn, method_ph int, receiver_var, receiver_type
 // p.tok == fn_name
 fn (p mut Parser) fn_call(f mut Fn, method_ph int, receiver_var, receiver_type string) {
 	if f.is_unsafe && !p.builtin_mod && !p.inside_unsafe {
-		p.error('you are calling an unsafe function outside of an unsafe block')
+		p.warn('you are calling an unsafe function outside of an unsafe block')
 	}	
 	if f.is_deprecated {
 		p.warn('$f.name is deprecated')
@@ -1044,11 +1051,8 @@ fn (p mut Parser) fn_call_args(f mut Fn) {
 			if p.tok != .comma && !is_variadic {
 				p.error('wrong number of arguments for $i,$arg.name fn `$f.name`: expected $f.args.len, but got less')
 			}
-			if p.tok == .comma {
-				p.fgen(', ')
-			}
-			if !is_variadic {
-				p.next()
+			if p.tok == .comma && (!is_variadic || (is_variadic && i < f.args.len-2 )) {
+				p.check(.comma)
 				p.gen(',')
 			}
 		}
