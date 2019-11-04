@@ -45,6 +45,7 @@ mut:
 	inside_return_expr bool
 	inside_unsafe bool
 	is_struct_init bool
+	is_var_decl    bool
 	if_expr_cnt    int
 	for_expr_cnt   int // to detect whether `continue` can be used
 	ptr_cast       bool
@@ -897,10 +898,14 @@ fn (p mut Parser) get_type() string {
 				// for q in p.table.types {
 				// println(q.name)
 				// }
-				p.error('unknown type `$typ`')
+				mut t_suggest, tc_suggest := p.table.find_misspelled_type(typ, p, 0.50)
+				if t_suggest.len > 0 {
+					t_suggest = '. did you mean: ($tc_suggest) `$t_suggest`'
+				}
+				p.error('unknown type `$typ`$t_suggest')
 			}
 		}
-		else if !t.is_public && t.mod != p.mod && t.name != '' && !p.first_pass() {
+		else if !t.is_public && t.mod != p.mod && !p.is_vgen && t.name != '' && !p.first_pass() {
 			p.error('type `$t.name` is private')
 		}	
 	}
@@ -1675,10 +1680,17 @@ fn (p mut Parser) name_expr() string {
 	if p.table.known_const(name) {
 		return p.get_const_type(name, ptr)
 	}
-
+	// TODO: V script? Try os module.
 	// Function (not method, methods are handled in `.dot()`)	
 	mut f := p.table.find_fn_is_script(name, p.v_script) or {
-		return p.get_undefined_fn_type(name, orig_name)
+		// First pass, the function can be defined later.
+		if p.first_pass() {
+			p.next()
+			return 'void'
+		}
+		// exhaused all options type,enum,const,mod,var,fn etc
+		// so show undefined error (also checks typos)
+		p.undefined_error(name, orig_name) return '' // panics
 	}
 	// no () after func, so func is an argument, just gen its name
 	// TODO verify this and handle errors
@@ -1700,6 +1712,7 @@ fn (p mut Parser) name_expr() string {
 		// p.error('`$f.name` used as value')
 	}
 
+	fn_call_ph := p.cgen.add_placeholder()
 	// println('call to fn $f.name of type $f.typ')
 	// TODO replace the following dirty hacks (needs ptr access to fn table)
 	new_f := f
@@ -1712,6 +1725,17 @@ fn (p mut Parser) name_expr() string {
 		// println('	from $f2.name(${f2.str_args(p.table)}) $f2.typ : $f2.type_inst')
 	}
 	f = new_f
+
+	// optional function call `function() or {}`, no return assignment
+    is_or_else := p.tok == .key_orelse
+    if !p.is_var_decl && is_or_else {
+		f.typ = p.gen_handle_option_or_else(f.typ, '', fn_call_ph)
+	}
+    else if !p.is_var_decl && !is_or_else && !p.inside_return_expr &&
+		f.typ.starts_with('Option_') {
+        opt_type := f.typ[7..]
+        p.error('unhandled option type: `?$opt_type`')
+    }
 
 	// dot after a function call: `get_user().age`
 	if p.tok == .dot {
@@ -1825,40 +1849,20 @@ fn (p mut Parser) get_c_func_type(name string) string {
 	return cfn.typ
 }
 
-fn (p mut Parser) get_undefined_fn_type(name string, orig_name string) string {
-	if p.first_pass() {
-		p.next()
-		// First pass, the function can be defined later.
-		return 'void'
-	} else {
-		// We are in the second pass, that means this function was not defined, throw an error.
-
-		// V script? Try os module.
-		// TODO
-		if p.v_script {
-			//name = name.replace('main__', 'os__')
-			//f = p.table.find_fn(name)
-		}
-
-		// check for misspelled function / variable / module
-		name_dotted := mod_gen_name_rev(name.replace('__', '.'))
-		suggested := p.identify_typo(name)
-		if suggested.len != 0 {
-			p.error('undefined: `$name_dotted`. did you mean:\n$suggested\n')
-		}
-
-		// If orig_name is a mod, then printing undefined: `mod` tells us nothing
-		// if p.table.known_mod(orig_name) {
-		if p.table.known_mod(orig_name) || p.import_table.known_alias(orig_name) {
-			m_name := mod_gen_name_rev(name.replace('__', '.'))
-			p.error('undefined function: `$m_name` (in module `$orig_name`)')
-		} else if orig_name in reserved_type_param_names {
-			p.error('the letter `$orig_name` is reserved for type parameters')
-		} else {
-			p.error('undefined: `$orig_name`')
-		}
-		return 'void'
+fn (p mut Parser) undefined_error(name string, orig_name string) {
+	name_dotted := mod_gen_name_rev(name.replace('__', '.'))
+	// check for misspelled function / variable / module / type
+	suggested := p.identify_typo(name)
+	if suggested.len != 0 {
+		p.error('undefined: `$name_dotted`. did you mean:\n$suggested\n')
 	}
+	// If orig_name is a mod, then printing undefined: `mod` tells us nothing
+	if p.table.known_mod(orig_name) || p.import_table.known_alias(orig_name) {
+		p.error('undefined: `$name_dotted` (in module `$orig_name`)')
+	} else if orig_name in reserved_type_param_names {
+		p.error('the letter `$orig_name` is reserved for type parameters')
+	}
+	p.error('undefined: `$orig_name`')
 }
 
 fn (p mut Parser) var_expr(v Var) string {
@@ -1949,8 +1953,7 @@ fn (p mut Parser) dot(str_typ_ string, method_ph int) string {
 	//}
 	mut str_typ := str_typ_
 	p.check(.dot)
-	is_variadic_arg := str_typ.starts_with('...')
-	if is_variadic_arg { str_typ = str_typ[3..] }
+	is_variadic_arg := str_typ.starts_with('varg_')
 	mut typ := p.find_type(str_typ)
 	if typ.name.len == 0 {
 		p.error('dot(): cannot find type `$str_typ`')
@@ -2050,11 +2053,21 @@ struct $typ.name {
 		return field.typ
 	}
 	// method
-	method := p.table.find_method(typ, field_name) or {
+	mut method := p.table.find_method(typ, field_name) or {
 		p.error_with_token_index('could not find method `$field_name`', fname_tidx) // should never happen
 		exit(1)
 	}
 	p.fn_call(mut method, method_ph, '', str_typ)
+    // optional method call `a.method() or {}`, no return assignment
+    is_or_else := p.tok == .key_orelse
+	if !p.is_var_decl && is_or_else {
+		method.typ = p.gen_handle_option_or_else(method.typ, '', method_ph)
+	}
+    else if !p.is_var_decl && !is_or_else && !p.inside_return_expr &&
+		method.typ.starts_with('Option_') {
+        opt_type := method.typ[7..]
+        p.error('unhandled option type: `?$opt_type`')
+    }
 	// Methods returning `array` should return `array_string` etc
 	if method.typ == 'array' && typ.name.starts_with('array_') {
 		return typ.name
@@ -2102,7 +2115,7 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 		//println('index expr typ=$typ')
 		//println(v.name)
 	//}
-	is_variadic_arg := typ.starts_with('...')
+	is_variadic_arg := typ.starts_with('varg_')
 	is_map := typ.starts_with('map_')
 	is_str := typ == 'string'
 	is_arr0 := typ.starts_with('array_')
@@ -2132,6 +2145,7 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 				p.gen(',')
 			}
 		}
+		if is_variadic_arg { typ = typ[5..] }
 		if is_fixed_arr {
 			// `[10]int` => `int`, `[10][3]int` => `[3]int`
 			if typ.contains('][') {
@@ -2733,7 +2747,7 @@ fn (p mut Parser) string_expr() {
 		// `C.puts('hi')` => `puts("hi");`
 		/*
 		Calling a C function sometimes requires a call to a string method
-		C.fun('ssss'.to_wide()) =>  fun(string_to_wide(tos2((byte*)('ssss'))))
+		C.fun('ssss'.to_wide()) =>  fun(string_to_wide(tos3("ssss")))
 		*/
 		if (p.calling_c && p.peek() != .dot) || (p.pref.translated && p.mod == 'main') {
 			p.gen('"$f"')
@@ -3098,7 +3112,9 @@ fn (p mut Parser) if_st(is_expr bool, elif_depth int) string {
 		var_name := p.lit
 		p.next()
 		p.check(.decl_assign)
+		p.is_var_decl = true
 		option_type, expr := p.tmp_expr()// := p.bool_expression()
+		p.is_var_decl = false
 		typ := option_type[7..]
 		// Option_User tmp = get_user(1);
 		// if (tmp.ok) {
@@ -3254,8 +3270,7 @@ fn (p mut Parser) for_st() {
 		is_arr := typ.starts_with('array_')
 		is_map := typ.starts_with('map_')
 		is_str := typ == 'string'
-		is_variadic_arg :=  typ.starts_with('...')
-		if is_variadic_arg { typ = typ[3..] }
+		is_variadic_arg :=  typ.starts_with('varg_')
 		if !is_arr && !is_str && !is_map && !is_variadic_arg {
 			p.error('cannot range over type `$typ`')
 		}
@@ -3267,25 +3282,24 @@ fn (p mut Parser) for_st() {
 				p.genln('$typ $tmp = $expr;')
 			}
 		}
-		pad := if is_arr { 6 } else  { 4 }
-		var_typ := if is_str { 'byte' }
-			else if is_variadic_arg { typ }
-			else { typ[pad..] }
 		// typ = strings.Replace(typ, "_ptr", "*", -1)
 		mut i_var_type := 'int'
 		if is_variadic_arg {
+			typ = typ[5..]
 			p.gen_for_varg_header(i, expr, typ, val)
 		}
 		else if is_arr {
-			p.gen_for_header(i, tmp, var_typ, val)
+			typ = typ[6..]
+			p.gen_for_header(i, tmp, typ, val)
 		}
 		else if is_map {
 			i_var_type = 'string'
-			p.gen_for_map_header(i, tmp, var_typ, val, typ)
+			typ = typ[4..]
+			p.gen_for_map_header(i, tmp, typ, val, typ)
 		}
 		else if is_str {
-			i_var_type = 'byte'
-			p.gen_for_str_header(i, tmp, var_typ, val)
+			typ = 'byte'
+			p.gen_for_str_header(i, tmp, typ, val)
 		}
 		// Register temp vars
 		if i != '_' {
@@ -3299,7 +3313,7 @@ fn (p mut Parser) for_st() {
 		if val != '_' {
 			p.register_var(Var {
 				name: val
-				typ: var_typ
+				typ: typ
 				ptr: typ.contains('*')
 			})
 		}
@@ -3315,8 +3329,7 @@ fn (p mut Parser) for_st() {
 		mut typ := p.bool_expression()
 		expr := p.cgen.end_tmp()
 		is_range := p.tok == .dotdot
-		is_variadic_arg :=  typ.starts_with('...')
-		if is_variadic_arg { typ = typ[3..] }
+		is_variadic_arg :=  typ.starts_with('varg_')
 		mut range_end := ''
 		if is_range {
 			p.check_types(typ, 'int')
@@ -3339,28 +3352,28 @@ fn (p mut Parser) for_st() {
 		}
 		// TODO var_type := if...
 		i := p.get_tmp()
-		mut var_type := typ
 		if is_variadic_arg {
+			typ = typ[5..]
 			p.gen_for_varg_header(i, expr, typ, val)
 		}
 		else if is_range {
-			var_type = 'int'
-			p.gen_for_range_header(i, range_end, tmp, var_type, val)
+			typ = 'int'
+			p.gen_for_range_header(i, range_end, tmp, typ, val)
 		}
 		else if is_arr {
-			var_type = typ[6..]// all after `array_`
-			p.gen_for_header(i, tmp, var_type, val)
+			typ = typ[6..]// all after `array_`
+			p.gen_for_header(i, tmp, typ, val)
 		}
 		else if is_str {
-			var_type = 'byte'
-			p.gen_for_str_header(i, tmp, var_type, val)
+			typ = 'byte'
+			p.gen_for_str_header(i, tmp, typ, val)
 		}
 		// println('for typ=$typ vartyp=$var_typ')
 		// Register temp var
 		if val != '_' {
 			p.register_var(Var {
 				name: val
-				typ: var_type
+				typ: typ
 				ptr: typ.contains('*')
 				is_changed: true
 				is_mut: false
