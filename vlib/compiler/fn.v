@@ -645,7 +645,11 @@ fn (p mut Parser) async_fn_call(f Fn, method_ph int, receiver_var, receiver_type
 	// Also register the wrapper, so we can use the original function without modifying it
 	fn_name = p.table.fn_gen_name(f)
 	wrapper_name := '${fn_name}_thread_wrapper'
-	wrapper_text := 'void* $wrapper_name($arg_struct_name * arg) {$fn_name( /*f*/$str_args );  }'
+	mut wrapper_type := 'void*'
+	if p.os == .windows {
+		wrapper_type = 'void* __stdcall'
+	}
+	wrapper_text := '$wrapper_type $wrapper_name($arg_struct_name * arg) {$fn_name( /*f*/$str_args );  }'
 	p.cgen.register_thread_fn(wrapper_name, wrapper_text, arg_struct)
 	// Create thread object
 	tmp_nr := p.get_tmp_counter()
@@ -727,7 +731,7 @@ fn (p mut Parser) fn_call(f mut Fn, method_ph int, receiver_var, receiver_type s
 				p.error('`$p.expr_var.name` is immutable, declare it with `mut`')
 			}
 		}
-		if !p.expr_var.is_changed {
+		if !p.expr_var.is_changed && receiver.is_mut {
 			p.mark_var_changed(p.expr_var)
 		}
 		p.gen_method_call(receiver, receiver_type, cgen_name, f.typ, method_ph)
@@ -963,14 +967,17 @@ fn (p mut Parser) fn_call_args(f mut Fn) {
 			}
 			typ = 'string'
 		}
-		if i == 0 && (f.name == 'println' || f.name == 'print')  && typ != 'string' && typ != 'ustring' && typ != 'void' {
+		if i == 0 && (f.name == 'println' || f.name == 'print')  &&
+			!(typ in ['string', 'ustring', 'void' ])
+		{
 			T := p.table.find_type(typ)
 			$if !windows {
 			$if !js {
 				fmt := p.typ_to_fmt(typ, 0)
-				if fmt != '' {
+				if fmt != '' && typ != 'bool' {
 					nl := if f.name == 'println' { '\\n' } else { '' }
-					p.cgen.resetln(p.cgen.cur_line.replace(f.name + ' (', '/*opt*/printf ("' + fmt + '$nl", '))
+					p.cgen.resetln(p.cgen.cur_line.replace(f.name +
+					' (', '/*opt*/printf ("' + fmt + '$nl", '))
 					continue
 				}
 			}
@@ -1219,7 +1226,7 @@ fn (p mut Parser) replace_type_params(f &Fn, ti TypeInst) []string {
 fn (p mut Parser) register_vargs_stuct(typ string, len int) string {
 	vargs_struct := 'varg_$typ'
 	varg_type := Type{
-		cat: TypeCategory.struct_,
+		cat: .struct_,
 		name: vargs_struct,
 		mod: p.mod
 	}
@@ -1299,7 +1306,7 @@ fn (p mut Parser) register_multi_return_stuct(types []string) string {
 	typ := '_V_MulRet_' + types.join('_V_').replace('*', '_PTR_')
 	if p.table.known_type(typ) { return typ }
 	p.table.register_type2(Type{
-		cat: TypeCategory.struct_,
+		cat: .struct_,
 		name: typ,
 		mod: p.mod
 	})

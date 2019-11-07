@@ -69,10 +69,13 @@ fn (p mut Parser) gen_blank_identifier_assign() {
 	p.check_name()
 	p.check_space(.assign)
 	is_indexer := p.peek() == .lsbr
-	is_fn_call, next_expr := p.is_next_expr_fn_call()
+	is_fn_call, next_expr := p.is_expr_fn_call(p.token_idx)
 	pos := p.cgen.add_placeholder()
 	p.is_var_decl = true
 	typ := p.bool_expression()
+	if typ == 'void' {
+		p.error_with_token_index('$next_expr() $err_used_as_value', p.token_idx-2)
+	}
 	p.is_var_decl = false
 	if !is_indexer && !is_fn_call {
 		p.error_with_token_index('assigning `$next_expr` to `_` is redundant', assign_error_tok_idx)
@@ -513,6 +516,17 @@ fn (p mut Parser) cast(typ string) {
 		p.cgen.set_placeholder(pos, '*($typ*)(')
 	}
 	else {
+		// Nothing can be cast to bool
+		if typ == 'bool' {
+			if is_number_type(expr_typ) || is_float_type(expr_typ) {
+				p.error('cannot cast a number to `bool`')
+			}	
+			p.error('cannot cast `$expr_typ` to `bool`')
+		}
+		// Strings can't be cast
+		if expr_typ == 'string' {
+			p.error('cannot cast `$expr_typ` to `$typ`')
+		}	
 		p.cgen.set_placeholder(pos, '($typ)(')
 	}
 	p.check(.rpar)

@@ -79,6 +79,12 @@ pub:
 
 const (
 	MaxModuleDepth = 4
+	Reserved_Types = {
+		'i8' : true, 'i16' : true, 'int' : true, 'i64' : true, 'i128' : true,
+		'byte' : true, 'u16' : true, 'u32' : true, 'u64' : true, 'u128' : true,
+		'f32' : true, 'f64' : true,
+		'rune' : true, 'byteptr' : true, 'voidptr' : true
+	}
 )
 
 // new parser from string. unique id specified in `id`.
@@ -227,7 +233,7 @@ fn (p & Parser) peek() TokenKind {
 }
 [inline] fn (p &Parser) peek_token() Token {
 	if p.token_idx >= p.tokens.len - 2 {
-		return Token{ tok:TokenKind.eof }
+		return Token{ tok:.eof }
 	}
 	return p.tokens[p.token_idx]
 }
@@ -313,32 +319,30 @@ fn (p mut Parser) parse(pass Pass) {
 			}
 		}
 		.key_enum {
-			p.next()
-			if p.tok == .name {
+			next := p.peek()
+			if next == .name {
 				p.fgen('enum ')
-				name := p.check_name()
 				p.fgen(' ')
-				p.enum_decl(name)
+				p.enum_decl(false)
 			}
-			else if p.pref.translated {
+			else if next == .lcbr && p.pref.translated {
 				// enum without a name, only allowed in code,
 				// translated from C. it's a very bad practice
 				// in C as well, but is used unfortunately
 				// (for example, by DOOM). such fields are
 				// basically int consts
-				p.enum_decl('int')
-			}
-			else {
-				p.check(.name)
+				p.enum_decl(true)
 			}
 		}
 		.key_pub {
 			next := p.peek()
 			match next {
-				.key_fn     {	p.fn_decl()     }
-				.key_const  {	p.const_decl()  }
-				.key_struct, .key_union, .key_interface {	p.struct_decl() }
-				.key_enum   {	p.enum_decl('') }
+				.key_fn        {	p.fn_decl()     }
+				.key_const     {	p.const_decl()  }
+				.key_struct,
+				.key_union,
+				.key_interface {	p.struct_decl() }
+				.key_enum      {	p.enum_decl(false) }
 				else {
 					p.error('wrong pub keyword usage')
 				}
@@ -373,8 +377,12 @@ fn (p mut Parser) parse(pass Pass) {
 		.key_global {
 			if !p.pref.translated && !p.pref.is_live &&
 				!p.builtin_mod && !p.pref.building_v &&
-				p.mod != 'ui'  && !os.getwd().contains('/volt') {
-				p.error('__global is only allowed in translated code')
+				p.mod != 'ui'  && !os.getwd().contains('/volt') &&
+				!p.pref.enable_globals
+			{
+				p.error('use `v --enable-globals ...` to enable globals')
+				
+				//p.error('__global is only allowed in translated code')
 			}
 			p.next()
 			name := p.check_name()
@@ -637,7 +645,7 @@ fn (p mut Parser) type_decl() {
 		name: name
 		parent: parent.name
 		mod: p.mod
-		cat: TypeCategory.alias
+		cat: .alias
 	})
 }
 
@@ -688,6 +696,12 @@ fn (p mut Parser) check_string() string {
 	return s
 }
 
+fn (p mut Parser) check_not_reserved () {
+	if p.lit in Reserved_Types { 
+		p.error('`$p.lit` can\'t be used as name') 
+	}
+}
+
 fn (p &Parser) strtok() string {
 	if p.tok == .name {
 		return p.lit
@@ -717,7 +731,9 @@ fn (p mut Parser) check(expected TokenKind) {
 		s := 'expected `${expected.str()}` but got `${p.strtok()}`'
 		p.next()
 		println('next token = `${p.strtok()}`')
-		print_backtrace()
+		if p.pref.is_debug {
+			print_backtrace()
+		}
 		p.error(s)
 	}
 	/*
@@ -1086,6 +1102,7 @@ fn (p mut Parser) statement(add_semi bool) string {
 		}
 		// `a := 777`
 		else if p.peek() == .decl_assign || p.peek() == .comma {
+			p.check_not_reserved()
 			//p.log('var decl')
 			p.var_decl()
 		}
@@ -1248,6 +1265,10 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 	//if p.expected_type.starts_with('array_') {
 		//p.warn('expecting array got $expr_type')
 	//}
+	if expr_type == 'void' {
+		_, fn_name := p.is_expr_fn_call(p.token_idx-3)
+		p.error_with_token_index('$fn_name() $err_used_as_value', p.token_idx-2)
+	}
 	// Allow `num = 4` where `num` is an `?int`
 	if p.assigned_type.starts_with('Option_') &&
 		expr_type == p.assigned_type['Option_'.len..] {
@@ -1266,6 +1287,14 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 			p.error_with_token_index( 'incompatible types: $p.assigned_type != $p.expected_type', errtok)
 		}
 		p.cgen.resetln('memcpy( (& $left), ($etype{$expr}), sizeof( $left ) );')
+	}
+	else if tok == .left_shift_assign || tok == .righ_shift_assign {
+		if !is_integer_type(p.assigned_type) {
+			p.error_with_token_index( 'cannot use shift operator on non-integer type `$p.assigned_type`', errtok)
+		}
+		if !is_integer_type(expr_type) {
+			p.error_with_token_index( 'cannot use non-integer type `$expr_type` as shift argument', errtok)
+		}
 	}
 	else if !p.builtin_mod && !p.check_types_no_throw(expr_type, p.assigned_type) {
 		p.error_with_token_index( 'cannot use type `$expr_type` as type `$p.assigned_type` in assignment', errtok)
@@ -1334,6 +1363,10 @@ fn (p mut Parser) var_decl() {
 	}
 	p.var_decl_name = if var_names.len > 1 { '_V_mret_'+var_names.join('_') } else { var_names[0] }
 	t := p.gen_var_decl(p.var_decl_name, is_static)
+	if t == 'void' {
+		_, fn_name := p.is_expr_fn_call(p.token_idx-3)
+		p.error_with_token_index('$fn_name() $err_used_as_value', p.token_idx-2)
+	}
 	mut var_types := [t]
 	// multiple returns types
 	if var_names.len > 1 {
@@ -1447,6 +1480,9 @@ fn (p mut Parser) bool_expression() string {
 		}
 		p.check_space(p.tok)
 		p.check_types(p.bterm(), typ)
+		if typ != 'bool' {
+			p.error('logical operators `&&` and `||` require booleans')
+		}	
 	}
 	if typ == '' {
 		println('curline:')
@@ -1663,7 +1699,7 @@ fn (p mut Parser) name_expr() string {
 			if p.expected_type == enum_type.name {
 				// `if color == .red` is enough
 				// no need in `if color == Color.red`
-				p.error('`${enum_type.name}.$val` is unnecessary, use `.$val`')
+				p.warn('`${enum_type.name}.$val` is unnecessary, use `.$val`')
 			}	
 			// println('enum val $val')
 			p.gen(mod_gen_name(enum_type.mod) + '__' + enum_type.name + '_' + val)// `color = main__Color_green`
@@ -2339,12 +2375,12 @@ fn (p mut Parser) indot_expr() string {
 		}
 		// `typ` is element's type
 		if is_map {
-			p.cgen.set_placeholder(ph, '_IN_MAP( (')
+			p.cgen.set_placeholder(ph, '(_IN_MAP( (')
 		}
 		else {
-			p.cgen.set_placeholder(ph, '_IN($typ, (')
+			p.cgen.set_placeholder(ph, '(_IN($typ, (')
 		}
-		p.gen(')')
+		p.gen('))')
 		return 'bool'
 	}
 	return typ
@@ -2395,17 +2431,23 @@ fn (p mut Parser) expression() string {
 			return 'void'
 		}
 		else {
+			if !is_integer_type(typ) {
+				p.error('cannot use shift operator on non-integer type `$typ`')
+			}
 			p.next()
 			p.gen(' << ')
-			p.check_types(p.expression(), typ)
-			return 'int'
+			p.check_types(p.expression(), 'integer')
+			return typ
 		}
 	}
 	if p.tok == .righ_shift {
+		if !is_integer_type(typ) {
+			p.error('cannot use shift operator on non-integer type `$typ`')
+		}
 		p.next()
 		p.gen(' >> ')
-		p.check_types(p.expression(), typ)
-		return 'int'
+		p.check_types(p.expression(), 'integer')
+		return typ
 	}
 	// + - | ^
 	for p.tok in [.plus, .minus, .pipe, .amp, .xor] {
@@ -2441,7 +2483,15 @@ fn (p mut Parser) expression() string {
 				p.gen(',')
 			}
 		}
-		p.check_types(p.term(), typ)
+		if is_str && tok_op != .plus {
+			p.error('strings only support `+` operator')
+		}	
+		expr_type := p.term()
+		if (tok_op in [.pipe, .amp]) && !(is_integer_type(expr_type) &&
+			is_integer_type(typ)) {
+			p.error('operators `&` and `|` are defined only on integer types')
+		}	
+		p.check_types(expr_type, typ)
 		if (is_str || is_ustr) && tok_op == .plus && !p.is_js {
 			p.gen(')')
 		}
@@ -2495,10 +2545,14 @@ fn (p mut Parser) term() string {
 		if (is_div || is_mod) && p.tok == .number && p.lit == '0' {
 			p.error('division or modulo by zero')
 		}
-		if is_mod && (is_float_type(typ) || !is_number_type(typ)) {
-			p.error('operator .mod requires integer types')
-		}
-		p.check_types(p.unary(), typ)
+		expr_type := p.unary()
+		if is_mod {
+			if !(is_integer_type(expr_type) && is_integer_type(typ)) {
+				p.error('operator `mod` requires integer types')
+			}
+		} else {
+			p.check_types(expr_type, typ)
+		}	
 	}
 	return typ
 }
@@ -3108,6 +3162,7 @@ fn (p mut Parser) if_st(is_expr bool, elif_depth int) string {
 	p.next()
 	// `if a := opt() { }` syntax
 	if p.tok == .name && p.peek() == .decl_assign {
+		p.check_not_reserved()
 		option_tmp := p.get_tmp()
 		var_name := p.lit
 		p.next()
@@ -3203,403 +3258,6 @@ fn (p mut Parser) if_st(is_expr bool, elif_depth int) string {
 		println('if ret typ="$typ" line=$p.scanner.line_nr')
 	}
 	return typ
-}
-
-fn (p mut Parser) for_st() {
-	p.check(.key_for)
-	p.fgen(' ')
-	p.for_expr_cnt++
-	next_tok := p.peek()
-	//debug := p.scanner.file_path.contains('r_draw')
-	p.open_scope()
-	if p.tok == .lcbr {
-		// Infinite loop
-		p.gen('while (1) {')
-	}
-	else if p.tok == .key_mut {
-		p.error('`mut` is not required in for loops')
-	}
-	// for i := 0; i < 10; i++ {
-	else if next_tok == .decl_assign || next_tok == .assign || p.tok == .semicolon {
-		p.genln('for (')
-		if next_tok == .decl_assign {
-			p.var_decl()
-		}
-		else if p.tok != .semicolon {
-			// allow `for ;; i++ {`
-			// Allow `for i = 0; i < ...`
-			p.statement(false)
-		}
-		p.check(.semicolon)
-		p.gen(' ; ')
-		p.fgen(' ')
-		if p.tok != .semicolon {
-			p.bool_expression()
-		}
-		p.check(.semicolon)
-		p.gen(' ; ')
-		p.fgen(' ')
-		if p.tok != .lcbr {
-			p.statement(false)
-		}
-		p.genln(') { ')
-	}
-	// for i, val in array
-	else if p.peek() == .comma {
-		/*
-		`for i, val in array {`
-		==>
-		```
-		 array_int tmp = array;
-		 for (int i = 0; i < tmp.len; i++) {
-		 int val = tmp[i];
-		```
-		*/
-		i := p.check_name()
-		p.check(.comma)
-		val := p.check_name()
-		if i == '_' && val == '_' {
-			p.error('no new variables on the left side of `in`')
-		}
-		p.fgen(' ')
-		p.check(.key_in)
-		p.fgen(' ')
-		tmp := p.get_tmp()
-		p.cgen.start_tmp()
-		mut typ := p.bool_expression()
-		is_arr := typ.starts_with('array_')
-		is_map := typ.starts_with('map_')
-		is_str := typ == 'string'
-		is_variadic_arg :=  typ.starts_with('varg_')
-		if !is_arr && !is_str && !is_map && !is_variadic_arg {
-			p.error('cannot range over type `$typ`')
-		}
-		expr := p.cgen.end_tmp()
-		if !is_variadic_arg {
-			if p.is_js {
-				p.genln('var $tmp = $expr;')
-			} else {
-				p.genln('$typ $tmp = $expr;')
-			}
-		}
-		// typ = strings.Replace(typ, "_ptr", "*", -1)
-		mut i_var_type := 'int'
-		if is_variadic_arg {
-			typ = typ[5..]
-			p.gen_for_varg_header(i, expr, typ, val)
-		}
-		else if is_arr {
-			typ = typ[6..]
-			p.gen_for_header(i, tmp, typ, val)
-		}
-		else if is_map {
-			i_var_type = 'string'
-			typ = typ[4..]
-			p.gen_for_map_header(i, tmp, typ, val, typ)
-		}
-		else if is_str {
-			typ = 'byte'
-			p.gen_for_str_header(i, tmp, typ, val)
-		}
-		// Register temp vars
-		if i != '_' {
-			p.register_var(Var {
-				name: i
-				typ: i_var_type
-				is_mut: true
-				is_changed: true
-			})
-		}
-		if val != '_' {
-			p.register_var(Var {
-				name: val
-				typ: typ
-				ptr: typ.contains('*')
-			})
-		}
-	}
-	// `for val in vals`
-	else if p.peek() == .key_in {
-		val := p.check_name()
-		p.fgen(' ')
-		p.check(.key_in)
-		p.fspace()
-		tmp := p.get_tmp()
-		p.cgen.start_tmp()
-		mut typ := p.bool_expression()
-		expr := p.cgen.end_tmp()
-		is_range := p.tok == .dotdot
-		is_variadic_arg :=  typ.starts_with('varg_')
-		mut range_end := ''
-		if is_range {
-			p.check_types(typ, 'int')
-			p.check_space(.dotdot)
-			p.cgen.start_tmp()
-			p.check_types(p.bool_expression(), 'int')
-			range_end = p.cgen.end_tmp()
-		}
-		is_arr := typ.contains('array')
-		is_str := typ == 'string'
-		if !is_arr && !is_str && !is_range && !is_variadic_arg {
-			p.error('cannot range over type `$typ`')
-		}
-		if !is_variadic_arg {
-			if p.is_js {
-				p.genln('var $tmp = $expr;')
-			} else {
-				p.genln('$typ $tmp = $expr;')
-			}
-		}
-		// TODO var_type := if...
-		i := p.get_tmp()
-		if is_variadic_arg {
-			typ = typ[5..]
-			p.gen_for_varg_header(i, expr, typ, val)
-		}
-		else if is_range {
-			typ = 'int'
-			p.gen_for_range_header(i, range_end, tmp, typ, val)
-		}
-		else if is_arr {
-			typ = typ[6..]// all after `array_`
-			p.gen_for_header(i, tmp, typ, val)
-		}
-		else if is_str {
-			typ = 'byte'
-			p.gen_for_str_header(i, tmp, typ, val)
-		}
-		// println('for typ=$typ vartyp=$var_typ')
-		// Register temp var
-		if val != '_' {
-			p.register_var(Var {
-				name: val
-				typ: typ
-				ptr: typ.contains('*')
-				is_changed: true
-				is_mut: false
-				is_for_var: true
-			})
-		}
-	} else {
-		// `for a < b {`
-		p.gen('while (')
-		p.check_types(p.bool_expression(), 'bool')
-		p.genln(') {')
-	}
-	p.fspace()
-	p.check(.lcbr)
-	p.genln('')
-	p.statements()
-	p.close_scope()
-	p.for_expr_cnt--
-	p.returns = false // TODO handle loops that are guaranteed to return
-}
-
-fn (p mut Parser) switch_statement() {
-	p.error('`switch` statement has been removed, use `match` instead:\n' +
-		'https://vlang.io/docs#match')
-}
-
-// Returns typ if used as expression
-fn (p mut Parser) match_statement(is_expr bool) string {
-	p.check(.key_match)
-	p.cgen.start_tmp()
-	typ := p.bool_expression()
-	expr := p.cgen.end_tmp()
-
-	// is it safe to use p.cgen.insert_before ???
-	tmp_var := p.get_tmp()
-	p.cgen.insert_before('$typ $tmp_var = $expr;')
-
-	p.check(.lcbr)
-	mut i := 0
-	mut all_cases_return := true
-
-	// stores typ of resulting variable
-	mut res_typ := ''
-
-	defer {
-		p.check(.rcbr)
-	}
-
-	for p.tok != .rcbr {
-		if p.tok == .key_else {
-			p.check(.key_else)
-			if p.tok == .arrow {
-				p.warn(match_arrow_warning)
-				p.check(.arrow)
-			}	
-
-			// unwrap match if there is only else
-			if i == 0 {
-				if is_expr {
-					// statements are dissallowed (if match is expression) so user cant declare variables there and so on
-
-					// allow braces is else
-					got_brace := p.tok == .lcbr
-					if got_brace {
-						p.check(.lcbr)
-					}
-
-					p.gen('( ')
-
-					res_typ = p.bool_expression()
-
-					p.gen(' )')
-
-					// allow braces in else
-					if got_brace {
-						p.check(.rcbr)
-					}
-
-					return res_typ
-				} else {
-					p.returns = false
-					p.check(.lcbr)
-
-					p.genln('{ ')
-					p.statements()
-					p.returns = all_cases_return && p.returns
-					return ''
-				}
-			}
-
-			if is_expr {
-				// statements are dissallowed (if match is expression) so user cant declare variables there and so on
-				p.gen(':(')
-
-				// allow braces is else
-				got_brace := p.tok == .lcbr
-				if got_brace {
-					p.check(.lcbr)
-				}
-
-				p.check_types(p.bool_expression(), res_typ)
-
-				// allow braces in else
-				if got_brace {
-					p.check(.rcbr)
-				}
-
-				p.gen(strings.repeat(`)`, i+1))
-
-				return res_typ
-			} else {
-				p.returns = false
-				p.genln('else // default:')
-
-				p.check(.lcbr)
-
-				p.genln('{ ')
-				p.statements()
-
-				p.returns = all_cases_return && p.returns
-				return ''
-			}
-		}
-
-		if i > 0 {
-			if is_expr {
-				p.gen(': (')
-			} else {
-				p.gen('else ')
-			}
-		} else if is_expr {
-			p.gen('(')
-		}
-
-		if is_expr {
-			p.gen('(')
-		} else {
-			p.gen('if (')
-		}
-
-		ph := p.cgen.add_placeholder()
-
-		// Multiple checks separated by comma
-		mut got_comma := false
-
-		for {
-			if got_comma {
-				p.gen(') || (')
-			}
-
-			mut got_string := false
-
-			if typ == 'string' {
-				got_string = true
-				p.gen('string_eq($tmp_var, ')
-			}
-			else {
-				p.gen('$tmp_var == ')
-			}
-
-			p.expected_type = typ
-			p.check_types(p.bool_expression(), typ)
-			p.expected_type = ''
-
-			if got_string {
-				p.gen(')')
-			}
-
-			if p.tok != .comma {
-				if got_comma {
-					p.gen(') ')
-					p.cgen.set_placeholder(ph, '(')
-				}
-				break
-			}
-			p.check(.comma)
-			got_comma = true
-		}
-		p.gen(')')
-
-		if p.tok == .arrow {
-			p.warn(match_arrow_warning)
-			p.check(.arrow)
-		}	
-
-		// statements are dissallowed (if match is expression) so user cant declare variables there and so on
-		if is_expr {
-			p.gen('? (')
-
-			// braces are required for now
-			p.check(.lcbr)
-
-			if i == 0 {
-				// on the first iteration we set value of res_typ
-				res_typ = p.bool_expression()
-			} else {
-				// later on we check that the value is of res_typ type
-				p.check_types(p.bool_expression(), res_typ)
-			}
-
-			// braces are required for now
-			p.check(.rcbr)
-
-			p.gen(')')
-		}
-		else {
-			p.returns = false
-			p.check(.lcbr)
-
-			p.genln('{ ')
-			p.statements()
-
-			all_cases_return = all_cases_return && p.returns
-			// p.gen(')')
-		}
-		i++
-	}
-
-	if is_expr {
-		// we get here if no else found, ternary requires "else" branch
-		p.error('Match expression requires "else"')
-	}
-
-	p.returns = false // only get here when no default, so return is not guaranteed
-
-	return ''
 }
 
 fn (p mut Parser) assert_statement() {
@@ -3951,17 +3609,17 @@ fn (p mut Parser) check_unused_imports() {
 	p.production_error_with_token_index( 'the following imports were never used: $output', 0 )
 }
 
-fn (p mut Parser) is_next_expr_fn_call() (bool, string) {
-	mut next_expr := p.lit
-	mut is_fn_call := p.peek() == .lpar
+fn (p mut Parser) is_expr_fn_call(start_tok_idx int) (bool, string) {
+	mut expr := p.tokens[start_tok_idx-1].str()
+	mut is_fn_call := p.tokens[start_tok_idx].tok == .lpar
 	if !is_fn_call {
-		mut i := p.token_idx+1
+		mut i := start_tok_idx
 		for (p.tokens[i].tok == .dot || p.tokens[i].tok == .name) &&
 			p.tokens[i].lit != '_' && i < p.tokens.len {
-			next_expr += if p.tokens[i].tok == .dot { '.' } else { p.tokens[i].lit }
+			expr += p.tokens[i].str()
 			i++
 		}
 		is_fn_call = p.tokens[i].tok == .lpar
 	}
-	return is_fn_call, next_expr
+	return is_fn_call, expr
 }

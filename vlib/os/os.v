@@ -7,7 +7,7 @@ module os
 import filepath
 
 #include <sys/stat.h>
-#include <signal.h>
+//#include <signal.h>
 #include <errno.h>
 
 /*
@@ -31,12 +31,14 @@ pub const (
 	MAX_PATH = 4096
 )
 
+/*
 struct C.FILE {
 	
 }
+*/
 
 pub struct File {
-	cfile &FILE
+	cfile voidptr
 }
 
 struct FileInfo {
@@ -147,6 +149,39 @@ pub fn cp(old, new string) ?bool {
 		os.system('cp $old $new')
 		return true // TODO make it return true or error when cp for linux is implemented
 	}
+}
+
+pub fn cp_r(source_path, dest_path string, overwrite bool) ?bool{
+	if !os.file_exists(source_path) {
+		return error('Source path doesn\'t exist')
+	}
+	//single file copy
+	if !os.is_dir(source_path) {
+		adjasted_path := if os.is_dir(dest_path) { 
+			filepath.join(dest_path, os.basedir(source_path)) } else { dest_path }
+		if os.file_exists(adjasted_path) {
+			if overwrite { os.rm(adjasted_path) }
+			else { return error('Destination file path already exist') }
+		}
+		os.cp(source_path, adjasted_path) or { return error(err) }
+		return true
+	}
+	if !os.is_dir(dest_path) {
+		return error('Destination path is not a valid directory')
+	}
+	files := os.ls(source_path) or { return error(err) }
+	for file in files {
+		sp := filepath.join(source_path, file)
+		dp := filepath.join(dest_path, file)
+		if os.is_dir(sp) {
+			os.mkdir(dp)
+		}
+		cp_r(sp, dp, overwrite) or {
+			os.rmdir(dp)
+			panic(err) 
+		}
+	}
+	return true
 }
 
 fn vfopen(path, mode string) *C.FILE {
@@ -305,7 +340,7 @@ pub fn (f File) close() {
 }
 
 // system starts the specified command, waits for it to complete, and returns its code.
-fn vpopen(path string) *C.FILE {
+fn vpopen(path string) voidptr {//*C.FILE {
 	$if windows {
 		mode := 'rb'
 		wpath := path.to_wide()
@@ -336,7 +371,7 @@ fn posix_wait4_to_exit_status(waitret int) (int,bool) {
 	}
 }
 
-fn vpclose(f *C.FILE) int {
+fn vpclose(f voidptr) int {
 	$if windows {
 		return int( C._pclose(f) )
 	}
@@ -578,7 +613,7 @@ pub fn get_raw_line() string {
     $if windows {
         max_line_chars := 256
         buf := &byte(malloc(max_line_chars*2))
-        if is_atty(0) {
+        if is_atty(0) > 0 {
             h_input := C.GetStdHandle(STD_INPUT_HANDLE)
             mut nr_chars := 0
             C.ReadConsole(h_input, buf, max_line_chars * 2, &nr_chars, 0)
@@ -830,7 +865,9 @@ pub fn realpath(fpath string) string {
 		res = int( C._fullpath( fullpath, fpath.str, MAX_PATH ) )
 	}
 	$else{
-		res = int( C.realpath( fpath.str, fullpath ) )
+		// here we want an int==0 if realpath failed, in which case
+		// realpath would return NULL, and !isnil(NULL) would be false==0
+		res = int( !isnil(C.realpath( fpath.str, fullpath )) )
 	}
 	if res != 0 {
 		return string(fullpath, vstrlen(fullpath))
