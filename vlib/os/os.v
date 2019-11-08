@@ -48,7 +48,7 @@ struct FileInfo {
 
 struct C.stat {
 	st_size int
-	st_mode int
+	st_mode u32
 	st_mtime int
 }
 
@@ -386,32 +386,6 @@ pub:
 	exit_code int
 	output string
 	//stderr string // TODO
-}
-
-// exec starts the specified command, waits for it to complete, and returns its output.
-pub fn exec(cmd string) ?Result {
-	if cmd.contains(';') || cmd.contains('&&') || cmd.contains('||') || cmd.contains('\n') {
-		return error(';, &&, || and \\n are not allowed in shell commands')
-	}
-	pcmd := '$cmd 2>&1'
-	f := vpopen(pcmd)
-	if isnil(f) {
-		return error('exec("$cmd") failed')
-	}
-	buf := [1000]byte
-	mut res := ''
-	for C.fgets(*char(buf), 1000, f) != 0 {
-		res += tos(buf, vstrlen(buf))
-	}
-	res = res.trim_space()
-	exit_code := vpclose(f)
-	//if exit_code != 0 {
-		//return error(res)
-	//}
-	return Result {
-		output: res
-		exit_code: exit_code
-	}
 }
 
 // `system` works like `exec()`, but only returns a return code.
@@ -820,7 +794,7 @@ pub fn is_dir(path string) bool {
 			return false
 		}
 		// ref: https://code.woboq.org/gcc/include/sys/stat.h.html
-		return (statbuf.st_mode & S_IFMT) == S_IFDIR
+		return (int(statbuf.st_mode) & S_IFMT) == S_IFDIR
 	}
 }
 
