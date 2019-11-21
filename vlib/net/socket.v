@@ -46,7 +46,7 @@ pub fn socket(family int, _type int, proto int) ?Socket {
 	// same port after the application exits.
 	C.setsockopt(sockfd, C.SOL_SOCKET, C.SO_REUSEADDR, &one, sizeof(int))
 	if sockfd == 0 {
-		return error('socket: init failed')
+		return error('net.socket: failed')
 	}
 	s := Socket {
 		sockfd: sockfd
@@ -65,7 +65,7 @@ pub fn socket_udp() ?Socket {
 pub fn (s Socket) setsockopt(level int, optname int, optvalue &int) ?int {
 	res := C.setsockopt(s.sockfd, level, optname, optvalue, C.sizeof(optvalue))
 	if res < 0 {
-		return error('socket: setsockopt failed')
+		return error('net.setsocketopt: failed with $res')
 	}
 	return int(res)
 }
@@ -79,7 +79,7 @@ pub fn (s Socket) bind(port int) ?int {
 	size := 16 // sizeof(C.sockaddr_in)
 	res := int(C.bind(s.sockfd, &addr, size))
 	if res < 0 {
-		return error('socket: bind failed')
+		return error('net.bind: failed with $res')
 	}
 	return res
 }
@@ -89,7 +89,7 @@ pub fn (s Socket) listen() ?int {
 	backlog := 128
 	res := int(C.listen(s.sockfd, backlog))
 	if res < 0 {
-		return error('socket: listen failed')
+		return error('net.listen: failed with $res')
 	}
 	$if debug {
 		println('listen res = $res')
@@ -105,7 +105,7 @@ pub fn (s Socket) listen_backlog(backlog int) ?int {
 	}
 	res := C.listen(s.sockfd, n)
 	if res < 0 {
-		return error('socket: listen_backlog failed')
+		return error('net.listen_backlog: failed with $res')
 	}
 	return int(res)
 }
@@ -136,7 +136,7 @@ pub fn (s Socket) accept() ?Socket {
 	size := 128 // sizeof(sockaddr_storage)
 	sockfd := C.accept(s.sockfd, &addr, &size)
 	if sockfd < 0 {
-		return error('socket: accept failed')
+		return error('net.accept: failed with $sockfd')
 	}
 	c := Socket {
 		sockfd: sockfd
@@ -165,12 +165,12 @@ pub fn (s Socket) connect(address string, port int) ?int {
 	info_res := C.getaddrinfo(address.str, sport.str, &hints, &info)
 	if info_res != 0 {
 		error_message := os.get_error_msg(net.error_code())
-		return error('socket: getaddrinfo failed ($error_message)')
+		return error('net.connect: getaddrinfo failed "$error_message"')
 	}
 	res := int(C.connect(s.sockfd, info.ai_addr, info.ai_addrlen))
 	if res < 0 {
 		error_message := os.get_error_msg(net.error_code())
-		return error('socket: connect failed ($error_message)')
+		return error('net.connect: connect failed "$error_message"')
 	}
 	return int(res)
 }
@@ -188,9 +188,9 @@ pub fn dial(address string, port int) ?Socket {
 
 // send string data to socket
 pub fn (s Socket) send(buf byteptr, len int) ?int {
-	res := int( C.send(s.sockfd, buf, len, 0) )
+	res := int( C.send(s.sockfd, buf, len, MSG_NOSIGNAL) )
 	if res < 0 {
-		return error('socket: send failed')
+		return error('net.send: failed with $res')
 	}
 	return res
 }
@@ -224,7 +224,7 @@ pub fn (s Socket) close() ?int {
 	// TODO: should shutdown throw an error? close will
 	// continue even if shutdown failed
 //	if shutdown_res < 0 {
-//		return error('socket: shutdown failed')
+//		return error('net.close: shutdown failed with $shutdown_res')
 //	}
 
 	mut res := 0
@@ -235,58 +235,65 @@ pub fn (s Socket) close() ?int {
 		res = C.close(s.sockfd)
 	}
 	if res < 0 {
-		return error('socket: close failed')
+		return error('net.close: failed with $res')
 	}
 
 	return 0
 }
 
-const (
-        MAX_READ = 400
+pub const (
+	CRLF = '\r\n'
+	MAX_READ = 400
+	MSG_PEEK = 0x02
 )
-pub fn (s Socket) write(str string) {
-        line := '$str\r\n'
-        C.send(s.sockfd, line.str, line.len, 0)
+
+// write - write a string with CRLF after it over the socket s
+pub fn (s Socket) write(str string) ?int {
+	line := '$str$CRLF'
+	res := int( C.send(s.sockfd, line.str, line.len, MSG_NOSIGNAL) )
+	if res < 0 { return error('net.write: failed with $res') }
+	return res
 }
 
+// read_line - retrieves a line from the socket s (i.e. a string ended with \n)
 pub fn (s Socket) read_line() string {
-        mut res := ''
-        for {
-                $if debug {
-					println('.')
-				}
-                mut buf := malloc(MAX_READ)
-                n := int(C.recv(s.sockfd, buf, MAX_READ-1, 0))
-			$if debug {
-				println('numbytes=$n')
+	mut buf := [MAX_READ]byte // where C.recv will store the network data
+	mut res := '' // The final result, including the ending \n.
+	for {
+		mut line := '' // The current line. Can be a partial without \n in it.
+		n := int(C.recv(s.sockfd, buf, MAX_READ-1, MSG_PEEK))
+		if n == -1 { return res }
+		if n == 0 {	return res }
+		buf[n] = `\0`
+		mut eol_idx := -1
+		for i := 0; i < n; i++ {
+			if int(buf[i]) == `\n` {
+				eol_idx = i
+				// Ensure that tos_clone(buf) later,
+				// will return *only* the first line (including \n),
+				// and ignore the rest
+				buf[i+1] = `\0`
+				break
 			}
-                if n == -1 {
-			$if debug {
-				println('recv failed')
-			}
-                        // TODO
-                        return ''
-                }
-                if n == 0 {
-                        break
-                }
-                // println('resp len=$numbytes')
-                buf[n] = `\0`
-		//  C.printf('!!buf= "%s" n=%d\n', buf,n)
-                line := string(buf)
-                res += line
-                // Reached a newline. That's an end of an IRC message
-                // TODO dont need ends_with check ?
-                if line.ends_with('\n') || n < MAX_READ - 1 {
-                        // println('NL')
-                        break
-                }
-                if line.ends_with('\r\n') {
-                        // println('RNL')
-                        break
-                }
-        }
-        return res
+		}
+		line = tos_clone(buf)
+		if eol_idx > 0 {
+			// At this point, we are sure that recv returned valid data,
+			// that contains *at least* one line.
+			// Ensure that the block till the first \n (including it)
+			// is removed from the socket's receive queue, so that it does
+			// not get read again.
+			C.recv(s.sockfd, buf, eol_idx+1, 0)
+			res += line
+			break
+		}
+		// recv returned a buffer without \n in it .
+		C.recv(s.sockfd, buf, n, 0)
+		res += line
+		res += CRLF
+		break
+	}
+	return res
 }
 
 pub fn (s Socket) get_port() int {

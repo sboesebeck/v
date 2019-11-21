@@ -57,7 +57,9 @@ fn (v mut V) cc() {
 				}	
 			}
 		}
-		os.mv(v.out_name_c, v.out_name)
+    
+		// v.out_name_c may be on a different partition than v.out_name
+		os.mv_by_cp(v.out_name_c, v.out_name) or { panic(err) }
 		exit(0)
 	}
 	// Cross compiling for Windows
@@ -73,6 +75,20 @@ fn (v mut V) cc() {
 			return
 		}
 	}
+	// arguments for the C compiler
+	mut a := [v.pref.cflags, '-std=gnu11',
+		'-Wall',
+		'-Wextra',
+		// TODO : activate -Werror once no warnings remain
+//		'-Werror',
+		// TODO : try and remove the below workaround options when the corresponding
+		// warnings are totally fixed/removed
+		'-Wno-unused-variable',
+		//'-Wno-unused-but-set-variable',
+		'-Wno-unused-parameter',
+		'-Wno-unused-result',
+		'-Wno-missing-braces',
+		'-Wno-unused-label']
 	// TCC on Linux by default, unless -cc was provided
 	// TODO if -cc = cc, TCC is still used, default compiler should be
 	// used instead.
@@ -95,6 +111,7 @@ fn (v mut V) cc() {
 				//os.mkdir('/var/tmp/tcc/lib/tcc/')
 				//os.create('/var/tmp/tcc/lib/tcc/libtcc1.a')
 				v.pref.ccompiler = tcc_path
+				a << '-m64'
 			}
 		}
 		} $else {
@@ -103,12 +120,14 @@ fn (v mut V) cc() {
 	}
 	//linux_host := os.user_os() == 'linux'
 	v.log('cc() isprod=$v.pref.is_prod outname=$v.out_name')
-	mut a := [v.pref.cflags, '-std=gnu11', '-w'] // arguments for the C compiler
 
 	if v.pref.is_so {
 		a << '-shared -fPIC '// -Wl,-z,defs'
 		v.out_name = v.out_name + '.so'
 	}
+	if v.pref.is_bare {
+		a << '-static -ffreestanding -nostdlib $vdir/vlib/os/bare/bare.S'
+	}	
 	if v.pref.build_mode == .build_module {
 		// Create the modules & out directory if it's not there.
 		mut out_dir := if v.dir.starts_with('vlib') {
@@ -279,7 +298,7 @@ start:
 			return
 		}
 		*/
-		verror(err) 
+		verror(err)
 		return
 	}
 	if res.exit_code != 0 {

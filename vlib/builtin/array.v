@@ -17,7 +17,7 @@ pub:
 }
 
 // Private function, used by V (`nums := []int`)
-pub fn new_array(mylen, cap, elm_size int) array {
+fn new_array(mylen, cap, elm_size int) array {
 	arr := array {
 		len: mylen
 		cap: cap
@@ -155,7 +155,7 @@ fn (a array) get(i int) voidptr {
 	return a.data + i * a.element_size
 }
 
-// array.first gives the first element of the array
+// array.first returns the first element of the array
 pub fn (a array) first() voidptr {
 	if a.len == 0 {
 		panic('array.first: array is empty')
@@ -163,7 +163,7 @@ pub fn (a array) first() voidptr {
 	return a.data + 0
 }
 
-// array.last gives the last element of the array
+// array.last returns the last element of the array
 pub fn (a array) last() voidptr {
 	if a.len == 0 {
 		panic('array.last: array is empty')
@@ -349,11 +349,11 @@ pub fn copy(dst, src []byte) int {
 }
 
 // Private function. Comparator for int type.
-fn compare_ints(a, b int) int {
-	if a < b {
+fn compare_ints(a, b &int) int {
+	if *a < *b {
 		return -1
 	}
-	if a > b {
+	if *a > *b {
 		return 1
 	}
 	return 0
