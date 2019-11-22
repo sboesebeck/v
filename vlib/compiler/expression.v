@@ -240,9 +240,6 @@ fn (p mut Parser) name_expr() string {
 			}
 			p.gen('(')
 			mut typ := name
-			if typ in p.cur_fn.dispatch_of.inst.keys() {
-				typ = p.cur_fn.dispatch_of.inst[typ]
-			}
 			p.cast(typ)
 			p.gen(')')
 			for p.tok == .dot {
@@ -320,7 +317,7 @@ fn (p mut Parser) name_expr() string {
 	new_f := f
 	p.fn_call(mut new_f, 0, '', '')
 	if f.is_generic {
-		f2 := p.table.find_fn(f.name) or {
+		_ = p.table.find_fn(f.name) or {
 			return ''
 		}
 		// println('after call of generic instance $new_f.name(${new_f.str_args(p.table)}) $new_f.typ')
