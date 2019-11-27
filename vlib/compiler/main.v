@@ -8,6 +8,7 @@ import (
 	os
 	strings
 	filepath
+	compiler.x64
 )
 
 pub const (
@@ -25,7 +26,7 @@ enum BuildMode {
 
 const (
 	supported_platforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd',
-		'netbsd', 'dragonfly', 'android', 'js', 'solaris']
+		'netbsd', 'dragonfly', 'android', 'js', 'solaris', 'haiku']
 )
 
 enum OS {
@@ -39,6 +40,7 @@ enum OS {
 	js   // TODO
 	android
 	solaris
+	haiku
 }
 
 enum Pass {
@@ -61,8 +63,10 @@ pub mut:
 	out_name_c string       // name of the temporary C file
 	files      []string     // all V files that need to be parsed and compiled
 	dir        string       // directory (or file) being compiled (TODO rename to path?)
+	compiled_dir string     // contains os.realpath() of the dir of the final file beeing compiled, or the dir itself when doing `v .`
 	table      &Table       // table with types, vars, functions etc
 	cgen       &CGen        // C code generator
+	x64        &x64.Gen
 	pref       &Preferences // all the preferences and settings extracted to a struct for reusability
 	lang_dir   string       // "~/code/v"
 	out_name   string       // "program.exe"
@@ -123,6 +127,7 @@ pub mut:
 
 	vlib_path string
 	vpath string
+	x64 bool
 }
 
 // Should be called by main at the end of the compilation process, to cleanup
@@ -344,6 +349,26 @@ pub fn (v mut V) compile() {
 	v.cc()
 }
 
+pub fn (v mut V) compile_x64() {
+	$if !linux {
+		println('v -x64 can only generate Linux binaries for now')
+		println('You are not on a Linux system, so you will not ' +
+			'be able to run the resulting executable')
+	}	
+	
+	v.files << v.v_files_from_dir(filepath.join(v.pref.vlib_path, 'builtin', 'bare'))
+	v.files << v.dir
+	v.x64.generate_elf_header()
+	for f in v.files {
+		v.parse(f, .decl)
+	}
+	for f in v.files {
+		v.parse(f, .main)
+	}
+	v.x64.generate_elf_footer()
+	
+}	
+
 fn (v mut V) generate_init() {
 	$if js { return }
 	if v.pref.build_mode == .build_module {
@@ -477,6 +502,9 @@ pub fn (v mut V) generate_main() {
 		else if v.table.main_exists() {
 			v.gen_main_start(true)
 			cgen.genln('  main__main();')
+			if !v.pref.is_bare {
+				cgen.genln('free(g_str_buf);')
+			}
 			v.gen_main_end('return 0')
 		}
 	}
@@ -669,6 +697,7 @@ pub fn (v mut V) add_v_files_to_compile() {
 	// add remaining main files last
 	for p in v.parsers {
 		if p.mod != 'main' { continue }
+		if p.is_vgen { continue }
 		v.files << p.file_path
 	}
 }
@@ -819,8 +848,8 @@ pub fn (v &V) log(s string) {
 pub fn new_v(args[]string) &V {
 	// Create modules dirs if they are missing
 	if !os.dir_exists(v_modules_path) {
-		os.mkdir(v_modules_path)
-		os.mkdir('$v_modules_path${os.path_separator}cache')
+		os.mkdir(v_modules_path) or { panic(err) }
+		os.mkdir('$v_modules_path${os.path_separator}cache') or { panic(err) }
 	}
 	
 	// Location of all vlib files
@@ -851,6 +880,7 @@ pub fn new_v(args[]string) &V {
 	if args.len < 2 {
 		dir = ''
 	}
+
 	// build mode
 	mut build_mode := BuildMode.default_mode
 	mut mod := ''
@@ -878,7 +908,7 @@ pub fn new_v(args[]string) &V {
 		// Cross compiling? Use separate dirs for each os
 		/*
 		if target_os != os.user_os() {
-			os.mkdir('$TmpPath/vlib/$target_os')
+			os.mkdir('$TmpPath/vlib/$target_os') or { panic(err) }
 			out_name = '$TmpPath/vlib/$target_os/${base}.o'
 			println('target_os=$target_os user_os=${os.user_os()}')
 			println('!Cross compiling $out_name')
@@ -914,7 +944,7 @@ pub fn new_v(args[]string) &V {
 		d := out_name.all_before_last(os.path_separator)
 		if !os.dir_exists(d) {
 			println('creating a new directory "$d"')
-			os.mkdir(d)
+			os.mkdir(d) or { panic(err) }
 		}	
 	}	
 	mut _os := OS.mac
@@ -968,9 +998,12 @@ pub fn new_v(args[]string) &V {
 	mut out_name_c := get_vtmp_filename(out_name, '.tmp.c')
 
 	cflags := get_cmdline_cflags(args)
-	
 	rdir := os.realpath(dir)
 	rdir_name := os.filename(rdir)
+	
+	if '-bare' in args {
+		verror('use -freestanding instead of -bare')
+	}	
 
 	obfuscate := '-obf' in args
 	is_repl := '-repl' in args
@@ -998,7 +1031,8 @@ pub fn new_v(args[]string) &V {
 		compress: '-compress' in args
 		enable_globals: '--enable-globals' in args
 		fast: '-fast' in args
-		is_bare: '-bare' in args
+		is_bare: '-freestanding' in args
+		x64: '-x64' in args
 		is_repl: is_repl
 		build_mode: build_mode
 		cflags: cflags
@@ -1024,10 +1058,12 @@ pub fn new_v(args[]string) &V {
 		os: _os
 		out_name: out_name
 		dir: dir
+		compiled_dir: if os.is_dir( rdir ) { rdir } else { os.dir( rdir ) }
 		lang_dir: vroot
 		table: new_table(obfuscate)
 		out_name_c: out_name_c
 		cgen: new_cgen(out_name_c)
+		x64: x64.new_gen(out_name)
 		vroot: vroot
 		pref: pref
 		mod: mod

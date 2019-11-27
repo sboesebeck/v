@@ -67,7 +67,7 @@ fn C.ftell(fp voidptr) int
 fn C.getenv(byteptr) byteptr
 fn C.sigaction(int, voidptr, int)
 
-fn C.GetLastError() u32
+
 
 // read_bytes reads an amount of bytes from the beginning of the file
 pub fn (f File) read_bytes(size int) []byte {
@@ -85,6 +85,27 @@ pub fn (f File) read_bytes_at(size, pos int) []byte {
 		arr[e] = data[e]
 	}
 	return arr
+}
+
+pub fn read_bytes(path string) ?[]byte {
+	mut fp := vfopen(path, 'rb')
+	if isnil(fp) {
+		return error('failed to open file "$path"')
+	}
+	C.fseek(fp, 0, C.SEEK_END)
+	fsize := C.ftell(fp)
+	C.rewind(fp)
+	println('fsize=$fsize')
+	mut data := malloc(fsize)
+	C.fread(data, fsize, 1, fp)
+	mut res  := [`0`].repeat(fsize)
+	for i in 0..fsize {
+		res[i] = data[i]
+	}
+	C.fclose(fp)
+	//res := []byte(data, 10) // TODO can't `return []byte(data)`
+	//println('res0 = ' + res[0].str())
+	return res
 }
 
 // read_file reads the file in `path` and returns the contents.
@@ -177,7 +198,7 @@ pub fn cp_r(osource_path, odest_path string, overwrite bool) ?bool{
 		sp := filepath.join(source_path, file)
 		dp := filepath.join(dest_path, file)
 		if os.is_dir(sp) {
-			os.mkdir(dp)
+			os.mkdir(dp) or { panic(err) }
 		}
 		cp_r(sp, dp, overwrite) or {
 			os.rmdir(dp)
@@ -731,12 +752,15 @@ fn on_segfault(f voidptr) {
 
 fn C.getpid() int
 fn C.proc_pidpath (int, byteptr, int) int
+fn C.readlink() int
 
-// executable return the path name of the executable that started the current process.
+
+// executable returns the path name of the executable that started the current
+// process.
 pub fn executable() string {
 	$if linux {
 		mut result := malloc(MAX_PATH)
-		count := int(C.readlink('/proc/self/exe', result, MAX_PATH ))
+		count := C.readlink('/proc/self/exe', result, MAX_PATH)
 		if count < 0 {
 			panic('error reading /proc/self/exe to get exe path')
 		}
@@ -848,9 +872,11 @@ pub fn realpath(fpath string) string {
 	mut fullpath := calloc( MAX_PATH )
 	mut res := 0
 	$if windows {
-	// here we want an int==0 if _fullpath failed , in which case
-	// it would return NULL, and !isnil(NULL) would be false==0
-		res = int( !isnil(C._fullpath( fullpath, fpath.str, MAX_PATH )) )
+		ret := C._fullpath(fullpath, fpath.str, MAX_PATH)
+		if ret == 0 {
+			return fpath
+		}	
+		return string(fullpath)
 	}
 	$else{
 		ret := C.realpath(fpath.str, fullpath)
@@ -859,10 +885,6 @@ pub fn realpath(fpath string) string {
 		}	
 		return string(fullpath)
 	}
-	if res != 0 {
-		return string(fullpath, vstrlen(fullpath))
-	}
-	return fpath
 }
 
 // walk_ext returns a recursive list of all file paths ending with `ext`.
@@ -970,7 +992,7 @@ pub fn mkdir_all(path string) {
 	for subdir in path.split(os.path_separator) {
 		p += subdir + os.path_separator
 		if !os.dir_exists(p) {
-			os.mkdir(p)
+			os.mkdir(p) or { panic(err) }
 		}
 	}
 }
@@ -1007,3 +1029,8 @@ pub fn tmpdir() string {
 	}
 	return path
 }
+
+
+pub fn chmod(path string, mode int) {
+	C.chmod(path.str, mode)
+}	
