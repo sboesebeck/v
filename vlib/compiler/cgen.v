@@ -16,6 +16,7 @@ struct CGen {
 	is_user      bool
 mut:
 	lines        []string
+	lines_extra  []string
 	typedefs     []string
 	type_aliases []string
 	includes     []string
@@ -41,7 +42,7 @@ mut:
 
 fn new_cgen(out_name_c string) &CGen {
 	path := out_name_c
-	out := os.create(path) or {
+	mut out := os.create(path) or {
 		println('failed to create $path')
 		return &CGen{}
 	}
@@ -102,6 +103,7 @@ fn (g mut CGen) resetln(s string) {
 fn (g mut CGen) save() {
 	s := g.lines.join('\n')
 	g.out.writeln(s)
+	g.out.writeln(g.lines_extra.join('\n'))
 	g.out.close()
 }
 

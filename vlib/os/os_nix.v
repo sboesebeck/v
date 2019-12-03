@@ -11,7 +11,7 @@ pub fn init_os_args(argc int, argv &byteptr) []string {
 	mut args := []string
 	for i in 0 .. argc {
 		args << string(argv[i])
-	}		
+	}
 	return args
 }
 
@@ -50,7 +50,7 @@ pub fn dir_exists(path string) bool {
 	/*
 	$if linux {
 		C.syscall(4, path.str) // sys_newstat
-	}	
+	}
 	*/
 	dir := C.opendir(path.str)
 	res := !isnil(dir)
@@ -73,9 +73,9 @@ pub fn mkdir(path string) ?bool {
 
 // exec starts the specified command, waits for it to complete, and returns its output.
 pub fn exec(cmd string) ?Result {
-	if cmd.contains(';') || cmd.contains('&&') || cmd.contains('||') || cmd.contains('\n') {
-		return error(';, &&, || and \\n are not allowed in shell commands')
-	}
+	//if cmd.contains(';') || cmd.contains('&&') || cmd.contains('||') || cmd.contains('\n') {
+		//return error(';, &&, || and \\n are not allowed in shell commands')
+	//}
 	pcmd := '$cmd 2>&1'
 	f := vpopen(pcmd)
 	if isnil(f) {
@@ -83,7 +83,7 @@ pub fn exec(cmd string) ?Result {
 	}
 	buf := [1000]byte
 	mut res := ''
-	for C.fgets(*char(buf), 1000, f) != 0 {
+	for C.fgets(charptr(buf), 1000, f) != 0 {
 		res += tos(buf, vstrlen(buf))
 	}
 	res = res.trim_space()
