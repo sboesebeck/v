@@ -23,6 +23,9 @@ fn (p mut Parser) comp_time() {
 		p.fspace()
 		if name in supported_platforms {
 			ifdef_name := os_name_to_ifdef(name)
+			if name == 'mac' {
+				p.warn('use `macos` instead of `mac`')
+			}
 			if not {
 				p.genln('#ifndef $ifdef_name')
 			}
@@ -31,7 +34,9 @@ fn (p mut Parser) comp_time() {
 			}
 			p.check(.lcbr)
 			os := os_from_string(name)
-			if (!not && os != p.os) || (not && os == p.os) {
+			if ((!not && os != p.os) || (not && os == p.os)) &&
+				!p.pref.output_cross_c
+			{
 				// `$if os {` for a different target, skip everything inside
 				// to avoid compilation errors (like including <windows.h>
 				// on non-Windows systems)

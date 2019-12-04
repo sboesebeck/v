@@ -126,7 +126,7 @@ fn (v mut V) cc() {
 		v.out_name = v.out_name + '.so'
 	}
 	if v.pref.is_bare {
-		a << '-fno-stack-protector -static -ffreestanding -nostdlib $vdir/vlib/os/bare/bare.S'
+		a << '-fno-stack-protector -static -ffreestanding -nostdlib'
 	}
 	if v.pref.build_mode == .build_module {
 		// Create the modules & out directory if it's not there.
@@ -146,13 +146,30 @@ fn (v mut V) cc() {
 	debug_mode := v.pref.is_debug
 	mut debug_options := '-g'
 	mut optimization_options := '-O2'
-	if v.pref.ccompiler.contains('clang') {
+
+	mut guessed_compiler := v.pref.ccompiler
+	if guessed_compiler == 'cc' && v.pref.is_prod {
+		// deliberately guessing only for -prod builds for performance reasons
+		if ccversion := os.exec('cc --version') {
+			if ccversion.exit_code == 0 {
+				if ccversion.output.contains('This is free software;')
+				&& ccversion.output.contains('Free Software Foundation, Inc.') {
+					guessed_compiler = 'gcc'
+				}
+				if ccversion.output.contains('clang version '){
+					guessed_compiler = 'clang'
+				}
+			}
+		}
+	}
+
+	if v.pref.ccompiler.contains('clang') || guessed_compiler == 'clang' {
 		if debug_mode {
 			debug_options = '-g -O0 -no-pie'
 		}
 		optimization_options = '-O3 -flto'
 	}
-	if v.pref.ccompiler.contains('gcc') {
+	if v.pref.ccompiler.contains('gcc') || guessed_compiler == 'gcc' {
 		if debug_mode {
 			debug_options = '-g3 -no-pie'
 		}
@@ -263,8 +280,8 @@ fn (v mut V) cc() {
 	a << libs
 	// Without these libs compilation will fail on Linux
 	// || os.user_os() == 'linux'
-	if !v.pref.is_bare && v.pref.build_mode != .build_module && (v.os == .linux || v.os == .freebsd || v.os == .openbsd ||
-		v.os == .netbsd || v.os == .dragonfly || v.os == .solaris) {
+	if !v.pref.is_bare && v.pref.build_mode != .build_module && v.os in [ .linux, .freebsd,
+		.openbsd, .netbsd, .dragonfly, .solaris, .haiku ] {
 		a << '-lm -lpthread '
 		// -ldl is a Linux only thing. BSDs have it in libc.
 		if v.os == .linux {
@@ -379,7 +396,7 @@ start:
 		ret2 := os.system('upx --lzma -qqq $v.out_name')
 		if ret2 != 0 {
 			println('upx failed')
-			$if mac {
+			$if macos {
 				println('install upx with `brew install upx`')
 			}
 			$if linux {
@@ -522,7 +539,7 @@ fn missing_compiler_info() string {
 	$if linux {
 		return 'On Debian/Ubuntu, run `sudo apt install build-essential`'
 	}
-	$if mac {
+	$if macos {
 		return 'Install command line XCode tools with `xcode-select --install`'
 	}
 	return ''

@@ -25,8 +25,8 @@ enum BuildMode {
 }
 
 const (
-	supported_platforms = ['windows', 'mac', 'linux', 'freebsd', 'openbsd',
-		'netbsd', 'dragonfly', 'android', 'js', 'solaris', 'haiku']
+	supported_platforms = ['windows', 'mac', 'macos', 'linux', 'freebsd',
+	'openbsd', 'netbsd', 'dragonfly', 'android', 'js', 'solaris', 'haiku']
 )
 
 enum OS {
@@ -129,6 +129,7 @@ pub mut:
 	vlib_path string
 	vpath string
 	x64 bool
+	output_cross_c bool
 }
 
 // Should be called by main at the end of the compilation process, to cleanup
@@ -395,6 +396,19 @@ fn (v mut V) generate_init() {
 			}
 		}
 		consts_init_body := v.cgen.consts_init.join_lines()
+
+    if v.pref.is_bare {
+      // vlib can't have init_consts()
+      v.cgen.genln('
+          void init() {
+                $call_mod_init_consts
+                $consts_init_body
+                builtin__init();
+                $call_mod_init
+          }
+      ')
+    }
+
 		if !v.pref.is_bare {
 		// vlib can't have `init_consts()`
 		v.cgen.genln('void init() {
@@ -510,9 +524,9 @@ pub fn (v mut V) generate_main() {
 
 pub fn (v mut V) gen_main_start(add_os_args bool){
 	v.cgen.genln('int main(int argc, char** argv) { ')
-	if !v.pref.is_bare {
-		v.cgen.genln('  init();')
-	}
+
+	v.cgen.genln('  init();')
+
 	if add_os_args && 'os' in v.table.imports {
 		v.cgen.genln('  os__args = os__init_os_args(argc, (byteptr*)argv);')
 	}
@@ -945,7 +959,7 @@ pub fn new_v(args[]string) &V {
 		$if linux {
 			_os = .linux
 		}
-		$if mac {
+		$if macos {
 			_os = .mac
 		}
 		$if windows {
@@ -965,6 +979,9 @@ pub fn new_v(args[]string) &V {
 		}
 		$if solaris {
 			_os = .solaris
+		}
+		$if haiku {
+			_os = .haiku
 		}
 	}
 	else {
@@ -1026,6 +1043,7 @@ pub fn new_v(args[]string) &V {
 		fast: '-fast' in args
 		is_bare: '-freestanding' in args
 		x64: '-x64' in args
+		output_cross_c: '-output-cross-platform-c' in args
 		is_repl: is_repl
 		build_mode: build_mode
 		cflags: cflags
@@ -1138,6 +1156,7 @@ pub fn os_from_string(os string) OS {
 		'linux' { return .linux}
 		'windows' { return .windows}
 		'mac' { return .mac}
+		'macos' { return .mac}
 		'freebsd' { return .freebsd}
 		'openbsd' { return .openbsd}
 		'netbsd' { return .netbsd}
@@ -1149,6 +1168,7 @@ pub fn os_from_string(os string) OS {
 			// notice that `-os msvc` became `-cc msvc`
 			verror('use the flag `-cc msvc` to build using msvc')
 		}
+		'haiku' { return .haiku }
 	}
 	println('bad os $os') // todo panic?
 	return .linux
