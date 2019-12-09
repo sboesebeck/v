@@ -80,8 +80,8 @@ pub:
 }
 
 const (
-	MaxModuleDepth = 4
-	Reserved_Types = {
+	max_module_depth = 5
+	reserved_types = {
 		'i8' : true, 'i16' : true, 'int' : true, 'i64' : true, 'i128' : true,
 		'byte' : true, 'u16' : true, 'u32' : true, 'u64' : true, 'u128' : true,
 		'f32' : true, 'f64' : true,
@@ -282,7 +282,7 @@ fn (p &Parser) log(s string) {
 */
 }
 
-pub fn (p mut Parser) save_state() ParserState {
+pub fn (p &Parser) save_state() ParserState {
 	return ParserState{
 		scanner_line_nr: p.scanner.line_nr
 		scanner_text   : p.scanner.text
@@ -608,8 +608,8 @@ fn (p mut Parser) import_statement() {
 		mod_alias = submodule
 		mod += '.' + submodule
 		depth++
-		if depth > MaxModuleDepth {
-			p.error('module depth of $MaxModuleDepth exceeded: $mod')
+		if depth > max_module_depth {
+			p.error('module depth of $max_module_depth exceeded: $mod')
 		}
 	}
 	// aliasing (import encoding.base64 as b64)
@@ -708,7 +708,7 @@ fn (p mut Parser) const_decl() {
 			// Do not do this when building a module, otherwise the consts
 			// will not be accessible.
 			if p.pref.build_mode != .build_module && is_compile_time_const(p.cgen.cur_line) {
-				p.cgen.consts << '#define $name $p.cgen.cur_line'
+				p.cgen.const_defines << '#define $name $p.cgen.cur_line'
 				p.cgen.resetln('')
 				p.fgen_nl()
 				continue
@@ -752,7 +752,7 @@ fn (p mut Parser) type_decl() {
 		''
 	}
 	p.gen_typedef('typedef $_struct $nt_pair; //type alias name="$name" parent=`$parent.name`')
-	p.table.register_type2(Type{
+	p.table.register_type(Type{
 		name: name
 		parent: parent.name
 		mod: p.mod
@@ -788,6 +788,7 @@ fn key_to_type_cat(tok TokenKind) TypeCategory {
 		.key_interface { return .interface_ }
 		.key_struct    { return .struct_    }
 		.key_union     { return .union_     }
+		else {}
 	}
 	verror('Unknown token: $tok')
 	return .builtin
@@ -807,7 +808,7 @@ fn (p mut Parser) check_string() string {
 }
 
 fn (p mut Parser) check_not_reserved () {
-	if Reserved_Types[p.lit] {
+	if reserved_types[p.lit] {
 		p.error('`$p.lit` can\'t be used as name')
 	}
 }
@@ -931,7 +932,7 @@ fn (p mut Parser) get_type() string {
 			mod: p.mod
 			func: f
 		}
-		p.table.register_type2(fn_typ)
+		p.table.register_type(fn_typ)
 		return f.typ_str()
 	}
 	// arrays ([]int)
@@ -1182,11 +1183,11 @@ fn (p mut Parser) free_var(v Var) {
 		if !v.is_returned && v.typ != 'FILE*' { //!v.is_c {
 			prev_line := p.cgen.lines[p.cgen.lines.len-2]
 			p.cgen.lines[p.cgen.lines.len-2] =
-				'$free_fn($v.name); /* :) close_scope free $v.typ */' + prev_line
+				'$free_fn ($v.name); /* :) close_scope free $v.typ */' + prev_line
 		}
 	} else {
 		//if p.fileis('mem.v') {println(v.name)}
-		p.genln('$free_fn($v.name); // close_scope free')
+		p.genln('$free_fn ($v.name); // close_scope free')
 	}
 }
 
@@ -1236,11 +1237,16 @@ fn (p mut Parser) statement(add_semi bool) string {
 		}
 		else {
 			// panic and exit count as returns since they stop the function
-			if p.lit == 'panic' || p.lit == 'exit' {
+			is_panic :=	p.lit == 'panic' || p.lit == 'exit'
+			if is_panic {
 				p.returns = true
 			}
 			// `a + 3`, `a(7)`, or just `a`
 			q = p.bool_expression()
+			// Fix "control reaches end of non-void function" error
+			if is_panic && p.cur_fn.typ == 'bool' {
+				p.genln(';\nreturn false;')
+			}
 		}
 	}
 	.key_goto {
@@ -1271,7 +1277,7 @@ fn (p mut Parser) statement(add_semi bool) string {
 		p.comp_time()
 	}
 	.key_if {
-		p.if_st(false, 0)
+		p.if_statement(false, 0)
 	}
 	.key_for {
 		p.for_st()
@@ -1379,6 +1385,10 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 			p.gen('= ustring_add($v.name, ')
 		}
 		else {
+			next := p.peek_token()
+			if next.tok == .number && next.lit== '1' {
+				p.error('use `++` instead of `+= 1`')
+			}
 			p.gen(' += ')
 		}
 	}
@@ -1398,7 +1408,7 @@ fn ($v.name mut $v.typ) $p.cur_fn.name (...) {
 	//}
 	if expr_type == 'void' {
 		_, fn_name := p.is_expr_fn_call(p.token_idx-3)
-		p.error_with_token_index('$fn_name() $err_used_as_value', p.token_idx-2)
+		p.error_with_token_index('${fn_name}() $err_used_as_value', p.token_idx-2)
 	}
 	// Allow `num = 4` where `num` is an `?int`
 	if p.assigned_type.starts_with('Option_') &&
@@ -1507,7 +1517,7 @@ fn (p mut Parser) var_decl() {
 	t := p.gen_var_decl(p.var_decl_name, is_static)
 	if t == 'void' {
 		_, fn_name := p.is_expr_fn_call(p.token_idx-3)
-		p.error_with_token_index('$fn_name() $err_used_as_value', p.token_idx-2)
+		p.error_with_token_index('${fn_name}() $err_used_as_value', p.token_idx-2)
 	}
 	mut var_types := [t]
 	// multiple returns types
@@ -1572,7 +1582,7 @@ fn (p mut Parser) var_decl() {
 				p.gen('$var_name = ${p.var_decl_name}.var_$i')
 				continue
 			}
-			// decleration
+			// declaration
 			p.gen('$var_type $var_name = ${p.var_decl_name}.var_$i')
 		}
 		p.register_var(Var {
@@ -1688,7 +1698,7 @@ fn (p mut Parser) get_c_func_type(name string) string {
 		// Do not allow it.
 		if !name.starts_with('gl') && !name.starts_with('glad') {
 		p.error('undefined C function `$f.name`\n' +
-			'define it with `fn C.$name([args]) [return_type]`')
+			'define it with `fn C.${name}([args]) [return_type]`')
 		}
 		return 'void*'
 	}
@@ -1717,6 +1727,12 @@ fn (p mut Parser) var_expr(v Var) string {
 	// println('var expr is_tmp=$p.cgen.is_tmp\n')
 	if !v.is_const {
 		p.mark_var_used(v)
+		// `C.foo(&var)` means that `var` is changed. Mark it as changed
+		// to avoid `var was declared as mutable but was never changed` errors.
+		if p.calling_c && !v.is_changed {
+			//println('marking C var changed: $v.name')
+			p.mark_var_changed(v)
+		}
 	}
 	fn_ph := p.cgen.add_placeholder()
 	p.expr_var = v
@@ -1801,10 +1817,10 @@ fn (p mut Parser) dot(str_typ_ string, method_ph int) string {
 	//if p.fileis('orm_test') {
 		//println('ORM dot $str_typ')
 	//}
-	mut str_typ := str_typ_
+	str_typ := str_typ_
 	p.check(.dot)
 	is_variadic_arg := str_typ.starts_with('varg_')
-	mut typ := p.find_type(str_typ)
+	typ := p.find_type(str_typ)
 	if typ.name.len == 0 {
 		p.error('dot(): cannot find type `$str_typ`')
 	}
@@ -2171,7 +2187,7 @@ fn (p mut Parser) indot_expr() string {
 	if p.tok == .key_in {
 		p.fspace()
 		p.check(.key_in)
-		p.expected_type = typ // this allows `foo in [.val1, .val2, .val3]`
+		p.expected_type = typ // this allows short enum syntax `foo in [.val1, .val2, .val3]`
 		if p.tok == .lsbr {
 			// a in [1,2,3] optimization => `a == 1 || a == 2 || a == 3`
 			// avoids an allocation
@@ -2182,8 +2198,15 @@ fn (p mut Parser) indot_expr() string {
 		p.gen('), ')
 		arr_typ := p.expression()
 		is_map := arr_typ.starts_with('map_')
-		if !arr_typ.starts_with('array_') && !is_map {
+		is_arr:= arr_typ.starts_with('array_')
+		if !is_arr && !is_map {
 			p.error('`in` requires an array/map')
+		}
+		if is_arr && arr_typ[6..] != typ {
+			p.error('bad element type: `$typ` in `$arr_typ`')
+		}
+		if is_map && typ != 'string' {
+			p.error('bad element type: expecting `string`')
 		}
 		T := p.table.find_type(arr_typ)
 		if !is_map && !T.has_method('contains') {
@@ -2255,154 +2278,6 @@ fn format_str(_str string) string {
 	str = str.replace('\r\n', '\\n')
 	str = str.replace('\n', '\\n')
 	return str
-}
-
-fn (p mut Parser) string_expr() {
-	is_raw := p.tok == .name && p.lit == 'r'
-	is_cstr := p.tok == .name && p.lit == 'c'
-	if is_raw || is_cstr {
-		p.next()
-	}
-	str := p.lit
-	// No ${}, just return a simple string
-	if p.peek() != .str_dollar || is_raw {
-		f := if is_raw { cescaped_path(str) } else { format_str(str) }
-		// `C.puts('hi')` => `puts("hi");`
-		/*
-		Calling a C function sometimes requires a call to a string method
-		C.fun('ssss'.to_wide()) =>  fun(string_to_wide(tos3("ssss")))
-		*/
-		if (p.calling_c && p.peek() != .dot) || is_cstr || (p.pref.translated && p.mod == 'main') {
-			p.gen('"$f"')
-		}
-		else if p.is_sql {
-			p.gen("'$str'")
-		}
-		else if p.is_js {
-			p.gen('tos("$f")')
-		}
-		else {
-			p.gen('tos3("$f")')
-		}
-		p.next()
-		return
-	}
-	$if js {
-		p.error('js backend does not support string formatting yet')
-	}
-	p.is_alloc = true // $ interpolation means there's allocation
-	mut args := '"'
-	mut format := '"'
-	mut complex_inter := false  // for vfmt
-	for p.tok == .str {
-		// Add the string between %d's
-		p.lit = p.lit.replace('%', '%%')
-		format += format_str(p.lit)
-		p.next()// skip $
-		if p.tok != .str_dollar {
-			continue
-		}
-		// Handle .dollar
-		p.check(.str_dollar)
-		// If there's no string after current token, it means we are in
-		// a complex expression (`${...}`)
-		if p.peek() != .str {
-			p.fgen('{')
-			complex_inter = true
-		}
-		// Get bool expr inside a temp var
-		typ, val_ := p.tmp_expr()
-		val := val_.trim_space()
-		args += ', $val'
-		if typ == 'string' {
-			// args += '.str'
-			// printf("%.*s", a.len, a.str) syntax
-			args += '.len, ${val}.str'
-		}
-		if typ == 'ustring' {
-			args += '.len, ${val}.s.str'
-		}
-		if typ == 'bool' {
-			//args += '.len, ${val}.str'
-		}
-		// Custom format? ${t.hour:02d}
-		custom := p.tok == .colon
-		if custom {
-			mut cformat := ''
-			p.next()
-			if p.tok == .dot {
-				cformat += '.'
-				p.next()
-			}
-			if p.tok == .minus { // support for left aligned formatting
-				cformat += '-'
-				p.next()
-			}
-			cformat += p.lit// 02
-			p.next()
-			fspec := p.lit // f
-			cformat += fspec
-			if fspec == 's' {
-				//println('custom str F=$cformat | format_specifier: "$fspec" | typ: $typ ')
-				if typ != 'string' {
-					p.error('only V strings can be formatted with a :${cformat} format, but you have given "${val}", which has type ${typ}')
-				}
-				args = args.all_before_last('${val}.len, ${val}.str') + '${val}.str'
-			}
-			format += '%$cformat'
-			p.next()
-		}
-		else {
-			f := p.typ_to_fmt(typ, 0)
-			if f == '' {
-				is_array := typ.starts_with('array_')
-				typ2 := p.table.find_type(typ)
-				has_str_method := p.table.type_has_method(typ2, 'str')
-				if is_array || has_str_method {
-					if is_array && !has_str_method {
-						p.gen_array_str(typ2)
-					}
-					tmp_var := p.get_tmp()
-					p.cgen.insert_before('string $tmp_var = ${typ}_str(${val});')
-					args = args.all_before_last(val) + '${tmp_var}.len, ${tmp_var}.str'
-					format += '%.*s '
-				}
-				else {
-					p.error('unhandled sprintf format "$typ" ')
-				}
-			}
-			format += f
-		}
-		//println('interpolation format is: |${format}| args are: |${args}| ')
-	}
-	if complex_inter {
-		p.fgen('}')
-	}
-	//p.fgen('\'')
-	// println("hello %d", num) optimization.
-	if p.cgen.nogen {
-		return
-	}
-	// println: don't allocate a new string, just print	it.
-	$if !windows {
-		cur_line := p.cgen.cur_line.trim_space()
-		if cur_line == 'println (' && p.tok != .plus {
-			p.cgen.resetln(cur_line.replace('println (', 'printf('))
-			p.gen('$format\\n$args')
-			return
-		}
-	}
-	// '$age'! means the user wants this to be a tmp string (uses global buffer, no allocation,
-	// won't be used	again)
-	// TODO remove this hack, do this automatically
-	if p.tok == .not {
-		p.check(.not)
-		p.gen('_STR_TMP($format$args)')
-	}
-	else {
-		// Otherwise do len counting + allocation + sprintf
-		p.gen('_STR($format$args)')
-	}
 }
 
 // m := map[string]int{}
@@ -2501,7 +2376,6 @@ fn (p mut Parser) array_init() string {
 	mut typ := ''
 	new_arr_ph := p.cgen.add_placeholder()
 	mut i := 0
-	pos := p.cgen.cur_line.len// remember cur line to fetch first number in cgen       for [0; 10]
 	for p.tok != .rsbr {
 		val_typ := p.bool_expression()
 		// Get the type of the first expression
@@ -2621,121 +2495,6 @@ fn (p mut Parser) get_tmp_counter() int {
 }
 
 
-fn (p mut Parser) if_st(is_expr bool, elif_depth int) string {
-	if is_expr {
-		//if p.fileis('if_expr') {
-			//println('IF EXPR')
-		//}
-		p.inside_if_expr = true
-		p.gen('((')
-	}
-	else {
-		p.gen('if (')
-	}
-	p.next()
-	p.fspace()
-	// `if a := opt() { }` syntax
-	if p.tok == .name && p.peek() == .decl_assign {
-		p.check_not_reserved()
-		option_tmp := p.get_tmp()
-		var_name := p.lit
-		p.next()
-		p.check(.decl_assign)
-		p.is_var_decl = true
-		option_type, expr := p.tmp_expr()// := p.bool_expression()
-		p.is_var_decl = false
-		typ := option_type[7..]
-		// Option_User tmp = get_user(1);
-		// if (tmp.ok) {
-		//   User user = *(User*)tmp.data;
-		//   [statements]
-		// }
-		p.cgen.insert_before('$option_type $option_tmp = $expr; ')
-		p.check(.lcbr)
-		p.genln(option_tmp + '.ok) {')
-		p.genln('$typ $var_name = *($typ*) $option_tmp . data;')
-		p.register_var(Var {
-			name: var_name
-			typ: typ
-			is_mut: false // TODO
-			//is_alloc: p.is_alloc || typ.starts_with('array_')
-			//line_nr: p.tokens[ var_token_idx ].line_nr
-			//token_idx: var_token_idx
-		})
-		p.statements()
-		p.returns = false
-		return 'void'
-	}	else {
-		p.check_types(p.bool_expression(), 'bool')
-	}
-	if is_expr {
-		p.gen(') ? (')
-	}
-	else {
-		p.genln(') {')
-	}
-	p.fspace()
-	p.check(.lcbr)
-	mut typ := ''
-	// if { if hack
-	if p.tok == .key_if && p.inside_if_expr {
-		typ = p.factor()
-		p.next()
-	}
-	else {
-		typ = p.statements()
-	}
-	if_returns := p.returns
-	p.returns = false
-	if p.tok == .key_else {
-		if !p.inside_if_expr {
-			p.fgen_nl()
-		}
-		p.check(.key_else)
-		p.fspace()
-		if p.tok == .key_if {
-			if is_expr {
-				p.gen(') : (')
-				nested := p.if_st(is_expr, elif_depth + 1)
-				nested_returns := p.returns
-				p.returns = if_returns && nested_returns
-				return nested
-			}
-			else {
-				p.gen(' else ')
-				nested := p.if_st(is_expr, 0)
-				nested_returns := p.returns
-				p.returns = if_returns && nested_returns
-				return nested
-			}
-			// return ''
-		}
-		if is_expr {
-			p.gen(') : (')
-		}
-		else {
-			p.genln(' else { ')
-		}
-		p.check(.lcbr)
-		// statements() returns the type of the last statement
-		first_typ := typ
-		typ = p.statements()
-		p.inside_if_expr = false
-		if is_expr {
-			p.check_types(first_typ, typ)
-			p.gen(strings.repeat(`)`, 2 * (elif_depth + 1)))
-		}
-		else_returns := p.returns
-		p.returns = if_returns && else_returns
-		return typ
-	}
-	p.inside_if_expr = false
-	if p.fileis('test_test') {
-		println('if ret typ="$typ" line=$p.scanner.line_nr')
-	}
-	return typ
-}
-
 fn (p mut Parser) assert_statement() {
 	if p.first_pass() {
 		return
@@ -2760,7 +2519,7 @@ if (!$tmp) {
 	eprintln(tos3("${filename}:${p.scanner.line_nr}: FAILED: ${cfname}()"));
 	eprintln(tos3("Source: $sourceline"));
     v_panic(tos3("An assertion failed."));
-	return;
+    exit(1);
 } else {
 	g_test_oks++;
 }
@@ -2775,9 +2534,9 @@ if (!$tmp) {
      tos3("$filename"),
      $p.scanner.line_nr,
      tos3("$sourceline"),
-     tos3("$p.cur_fn.name()")
+     tos3("${p.cur_fn.name}()")
   );
-  return;
+  exit(1);
   // TODO
   // Maybe print all vars in a test function if it fails?
 } else {
@@ -2786,7 +2545,7 @@ if (!$tmp) {
      tos3("$filename"),
      $p.scanner.line_nr,
      tos3("$sourceline"),
-     tos3("$p.cur_fn.name()")
+     tos3("${p.cur_fn.name}()")
   );
 }
 
@@ -2986,7 +2745,7 @@ fn (p mut Parser) js_decode() string {
 		decl += 'cJSON* $cjson_tmp = json__json_parse($expr);'
 		p.cgen.insert_before(decl)
 		// p.gen('jsdecode_$typ(json_parse($expr), &$tmp);')
-		p.gen('json__jsdecode_$typ($cjson_tmp, &$tmp); cJSON_Delete($cjson_tmp);')
+		p.gen('json__jsdecode_${typ}($cjson_tmp, &$tmp); cJSON_Delete($cjson_tmp);')
 		opt_type := 'Option_$typ'
 		p.cgen.typedefs << 'typedef Option $opt_type;'
 		p.table.register_builtin(opt_type)
@@ -2998,7 +2757,7 @@ fn (p mut Parser) js_decode() string {
 		T := p.table.find_type(typ)
 		p.gen_json_for_type(T)
 		p.check(.rpar)
-		p.gen('json__json_print(json__jsencode_$typ($expr))')
+		p.gen('json__json_print(json__jsencode_${typ}($expr))')
 		return 'string'
 	}
 	else {
@@ -3083,7 +2842,7 @@ fn (p mut Parser) check_unused_imports() {
 	p.production_error_with_token_index( 'the following imports were never used: $output', 0 )
 }
 
-fn (p mut Parser) is_expr_fn_call(start_tok_idx int) (bool, string) {
+fn (p &Parser) is_expr_fn_call(start_tok_idx int) (bool, string) {
 	mut expr := p.tokens[start_tok_idx-1].str()
 	mut is_fn_call := p.tokens[start_tok_idx].tok == .lpar
 	if !is_fn_call {

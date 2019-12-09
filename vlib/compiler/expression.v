@@ -97,6 +97,7 @@ fn (p mut Parser) bterm() string {
 				.ge { p.cgen.set_placeholder(ph, 'string_ge(') }
 				.gt { p.cgen.set_placeholder(ph, 'string_gt(') }
 				.lt { p.cgen.set_placeholder(ph, 'string_lt(') }
+				else { }
 			}
 		}
 		if is_ustr {
@@ -108,6 +109,7 @@ fn (p mut Parser) bterm() string {
 				.ge { p.cgen.set_placeholder(ph, 'ustring_ge(') }
 				.gt { p.cgen.set_placeholder(ph, 'ustring_gt(') }
 				.lt { p.cgen.set_placeholder(ph, 'ustring_lt(') }
+				else { }
 			}
 		}
 		if is_float && p.cur_fn.name != 'f32_abs' && p.cur_fn.name != 'f64_abs' {
@@ -119,6 +121,7 @@ fn (p mut Parser) bterm() string {
 				.ge { p.cgen.set_placeholder(ph, '${expr_type}_ge(') }
 				.gt { p.cgen.set_placeholder(ph, '${expr_type}_gt(') }
 				.lt { p.cgen.set_placeholder(ph, '${expr_type}_lt(') }
+				else { }
 			}
 		}
 	}
@@ -184,7 +187,11 @@ fn (p mut Parser) name_expr() string {
 		p.check(.dot)
 		name = p.lit
 		// C struct initialization
-		if p.peek() == .lcbr && p.table.known_type(name) {
+		if p.peek() == .lcbr && p.expected_type == '' { // not an expression
+			if !p.table.known_type(name) {
+				p.error('unknown C type `$name`, ' +
+					'define it with `struct C.$name { ... }`')
+			}
 			return p.get_struct_type(name, true, ptr)
 		}
 		if ptr && p.peek() == .lpar {
@@ -328,7 +335,7 @@ fn (p mut Parser) name_expr() string {
 			mod: p.mod
 			func: f
 		}
-		p.table.register_type2(fn_typ)
+		p.table.register_type(fn_typ)
 		p.gen(p.table.fn_gen_name(f))
 		p.next()
 		return f.typ_str() //'void*'
@@ -392,7 +399,7 @@ fn (p mut Parser) expression() string {
 		//p.print_tok()
 	//}
 	ph := p.cgen.add_placeholder()
-	mut typ := p.indot_expr()
+	typ := p.indot_expr()
 	is_str := typ=='string'
 	is_ustr := typ=='ustring'
 	// `a << b` ==> `array_push(&a, b)`
@@ -573,6 +580,7 @@ fn (p mut Parser) term() string {
 				.mul {   p.handle_operator('*', typ, 'op_mul', ph, T) }
 				.div {   p.handle_operator('/', typ, 'op_div', ph, T) }
 				.mod {   p.handle_operator('%', typ, 'op_mod', ph, T) }
+				else {}
 			}
 			continue
 		}
@@ -743,7 +751,7 @@ fn (p mut Parser) factor() string {
 		return p.assoc()
 	}
 	.key_if {
-		typ = p.if_st(true, 0)
+		typ = p.if_statement(true, 0)
 		return typ
 	}
 	.key_match {

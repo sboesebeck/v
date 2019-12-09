@@ -133,7 +133,7 @@ pub mut:
 }
 
 // Should be called by main at the end of the compilation process, to cleanup
-pub fn (v mut V) finalize_compilation(){
+pub fn (v &V) finalize_compilation(){
 	// TODO remove
 	if v.pref.autofree {
 		/*
@@ -284,6 +284,9 @@ pub fn (v mut V) compile() {
 	if '-debug_alloc' in os.args {
 		cgen.genln('#define DEBUG_ALLOC 1')
 	}
+	if v.pref.is_live && v.os != .windows {
+		cgen.includes << '#include <dlfcn.h>'
+	}
 	//cgen.genln('/*================================== FNS =================================*/')
 	cgen.genln('// this line will be replaced with definitions')
 	mut defs_pos := cgen.lines.len - 1
@@ -313,6 +316,7 @@ pub fn (v mut V) compile() {
 	}
 	// All definitions
 	mut def := strings.new_builder(10000)// Avoid unnecessary allocations
+	def.writeln(cgen.const_defines.join_lines())
 	$if !js {
 		def.writeln(cgen.includes.join_lines())
 		def.writeln(cgen.typedefs.join_lines())
@@ -498,13 +502,15 @@ pub fn (v mut V) generate_main() {
 			v.gen_main_start(false)
 
 			if v.pref.is_stats {
-				cgen.genln('BenchedTests bt = main__start_testing();')
+				// QQQ
+				//cgen.genln('BenchedTests bt = main__start_testing();')
 			}
 
 			for _, f in v.table.fns {
 				if f.name.starts_with('main__test_') {
-					if v.pref.is_stats { cgen.genln('BenchedTests_testing_step_start(&bt, tos3("$f.name"));') }
-					cgen.genln('$f.name();')
+					if v.pref.is_stats {
+						cgen.genln('BenchedTests_testing_step_start(&bt, tos3("$f.name"));') }
+					cgen.genln('$f.name ();')
 					if v.pref.is_stats { cgen.genln('BenchedTests_testing_step_end(&bt);') }
 				}
 			}
@@ -587,13 +593,13 @@ pub fn (v V) run_compiled_executable_and_exit() {
 
 pub fn (v &V) v_files_from_dir(dir string) []string {
 	mut res := []string
-	if !os.file_exists(dir) {
-		if dir == 'compiler' && os.dir_exists('vlib') {
+	if !os.exists(dir) {
+		if dir == 'compiler' && os.is_dir('vlib') {
 			println('looks like you are trying to build V with an old command')
 			println('use `v -o v v.v` instead of `v -o v compiler`')
 		}
 		verror("$dir doesn't exist")
-	} else if !os.dir_exists(dir) {
+	} else if !os.is_dir(dir) {
 		verror("$dir isn't a directory")
 	}
 	mut files := os.ls(dir) or { panic(err) }
@@ -639,7 +645,7 @@ pub fn (v mut V) add_v_files_to_compile() {
 	}
 	// Builtin cache exists? Use it.
 	builtin_vh := '${v.pref.vlib_path}${os.path_separator}builtin.vh'
-	if v.pref.is_cache && os.file_exists(builtin_vh) {
+	if v.pref.is_cache && os.exists(builtin_vh) {
 		v.cached_mods << 'builtin'
 		builtin_files = [builtin_vh]
 	}
@@ -685,7 +691,7 @@ pub fn (v mut V) add_v_files_to_compile() {
 		if v.pref.vpath != '' && v.pref.build_mode != .build_module && !mod.contains('vweb') {
 			mod_path := mod.replace('.', os.path_separator)
 			vh_path := '$v_modules_path${os.path_separator}vlib${os.path_separator}${mod_path}.vh'
-			if v.pref.is_cache && os.file_exists(vh_path) {
+			if v.pref.is_cache && os.exists(vh_path) {
 				eprintln('using cached module `$mod`: $vh_path')
 				v.cached_mods << mod
 				v.files << vh_path
@@ -850,7 +856,7 @@ pub fn (v &V) log(s string) {
 
 pub fn new_v(args[]string) &V {
 	// Create modules dirs if they are missing
-	if !os.dir_exists(v_modules_path) {
+	if !os.is_dir(v_modules_path) {
 		os.mkdir(v_modules_path) or { panic(err) }
 		os.mkdir('$v_modules_path${os.path_separator}cache') or { panic(err) }
 	}
@@ -923,7 +929,7 @@ pub fn new_v(args[]string) &V {
 	}
 	is_test := dir.ends_with('_test.v')
 	is_script := dir.ends_with('.v') || dir.ends_with('.vsh')
-	if is_script && !os.file_exists(dir) {
+	if is_script && !os.exists(dir) {
 		println('`$dir` does not exist')
 		exit(1)
 	}
@@ -933,7 +939,7 @@ pub fn new_v(args[]string) &V {
 		// Building V? Use v2, since we can't overwrite a running
 		// executable on Windows + the precompiled V is more
 		// optimized.
-		if out_name == 'v' && os.dir_exists('vlib/compiler') {
+		if out_name == 'v' && os.is_dir('vlib/compiler') {
 			println('Saving the resulting V executable in `./v2`')
 			println('Use `v -o v v.v` if you want to replace current '+
 				'V executable.')
@@ -948,7 +954,7 @@ pub fn new_v(args[]string) &V {
 	// `v -o dir/exec`, create "dir/" if it doesn't exist
 	if out_name.contains(os.path_separator) {
 		d := out_name.all_before_last(os.path_separator)
-		if !os.dir_exists(d) {
+		if !os.is_dir(d) {
 			println('creating a new directory "$d"')
 			os.mkdir(d) or { panic(err) }
 		}
@@ -989,7 +995,7 @@ pub fn new_v(args[]string) &V {
 	}
 	//println('VROOT=$vroot')
 	// v.exe's parent directory should contain vlib
-	if !os.dir_exists(vlib_path) || !os.dir_exists(vlib_path + os.path_separator + 'builtin') {
+	if !os.is_dir(vlib_path) || !os.is_dir(vlib_path + os.path_separator + 'builtin') {
 		//println('vlib not found, downloading it...')
 		/*
 		ret := os.system('git clone --depth=1 https://github.com/vlang/v .')
@@ -1104,7 +1110,7 @@ pub fn env_vflags_and_os_args() []string {
 pub fn vfmt(args[]string) {
 	println('running vfmt...')
 	file := args.last()
-	if !os.file_exists(file) {
+	if !os.exists(file) {
 		println('"$file" does not exist')
 		exit(1)
 	}
@@ -1169,8 +1175,9 @@ pub fn os_from_string(os string) OS {
 			verror('use the flag `-cc msvc` to build using msvc')
 		}
 		'haiku' { return .haiku }
+		else { panic('bad os $os') }
 	}
-	println('bad os $os') // todo panic?
+	//println('bad os $os') // todo panic?
 	return .linux
 }
 
@@ -1180,7 +1187,7 @@ pub fn set_vroot_folder(vroot_path string) {
 	// Preparation for the compiler module:
 	// VEXE env variable is needed so that compiler.vexe_path()
 	// can return it later to whoever needs it:
-	mut vname := if os.user_os() == 'windows' { 'v.exe' } else { 'v' }
+	vname := if os.user_os() == 'windows' { 'v.exe' } else { 'v' }
 	os.setenv('VEXE', os.realpath( [vroot_path, vname].join(os.path_separator) ), true)
 }
 

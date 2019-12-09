@@ -72,7 +72,7 @@ fn (a []TypeInst) str() string {
 	return r.str()
 }
 
-fn (p mut Parser) find_var_or_const(name string) ?Var {
+fn (p &Parser) find_var_or_const(name string) ?Var {
 	if p.known_var(name) {
 		return p.find_var(name)
 	}
@@ -150,14 +150,14 @@ fn (p mut Parser) mark_arg_moved(v Var) {
 	p.table.fns[p.cur_fn.name] = p.cur_fn
 }
 
-fn (p mut Parser) known_var(name string) bool {
+fn (p &Parser) known_var(name string) bool {
 	_ = p.find_var(name) or {
 		return false
 	}
 	return true
 }
 
-fn (p mut Parser) known_var_check_new_var(name string) bool {
+fn (p &Parser) known_var_check_new_var(name string) bool {
 	_ = p.find_var_check_new_var(name) or {
 		return false
 	}
@@ -309,18 +309,7 @@ fn (p mut Parser) fn_decl() {
 		f.name = p.check_name()
 		f.is_c = true
 	}
-	else if !p.pref.translated {
-		if contains_capital(f.name) && !p.fileis('view.v') && !p.is_vgen {
-			println('`$f.name`')
-			p.error('function names cannot contain uppercase letters, use snake_case instead')
-		}
-		if f.name[0] == `_` {
-			p.error('function names cannot start with `_`, use snake_case instead')
-		}
-		if f.name.contains('__') {
-			p.error('function names cannot contain double underscores, use single underscores instead')
-		}
-	}
+	orig_name := f.name
 	// simple_name := f.name
 	// user.register() => User_register()
 	has_receiver := receiver_typ.len > 0
@@ -385,7 +374,21 @@ fn (p mut Parser) fn_decl() {
 	// V allows empty functions (just definitions)
 	is_fn_header := !is_c && !p.is_vh &&		p.tok != .lcbr
 	if is_fn_header {
+		f.name = orig_name // don't prepend module to external fn defs
 		f.is_decl = true
+	}
+	// Make sure the name is valid
+	if !is_c && !p.pref.translated && !is_fn_header {
+		if contains_capital(orig_name) && !p.fileis('view.v') && !p.is_vgen {
+			//println(orig_name)
+			p.error('function names cannot contain uppercase letters, use snake_case instead')
+		}
+		if f.name[0] == `_` {
+			p.error('function names cannot start with `_`, use snake_case instead')
+		}
+		if orig_name.contains('__') {
+			p.error('function names cannot contain double underscores, use single underscores instead')
+		}
 	}
 	// `{` required only in normal function declarations
 	if !is_c && !p.is_vh && !is_fn_header {
@@ -455,7 +458,7 @@ fn (p mut Parser) fn_decl() {
 	}
 
 	if is_fn_header {
-		p.genln('$typ $fn_name_cgen($str_args);')
+		p.genln('$typ $fn_name_cgen ($str_args);')
 		p.fgen_nl()
 	}
 	if is_c {
@@ -473,7 +476,7 @@ fn (p mut Parser) fn_decl() {
 				mod: p.mod
 				is_placeholder: true
 			}
-			p.table.register_type2(receiver_t)
+			p.table.register_type(receiver_t)
 		}
 		p.add_method(receiver_t.name, f)
 	}
@@ -495,7 +498,7 @@ fn (p mut Parser) fn_decl() {
 			fn_name_cgen = '(* $fn_name_cgen )'
 		}
 		// Function definition that goes to the top of the C file.
-		mut fn_decl := '$dll_export_linkage$typ $fn_name_cgen($str_args)'
+		mut fn_decl := '$dll_export_linkage$typ $fn_name_cgen ($str_args)'
 		if p.pref.obfuscate {
 			fn_decl += '; // $f.name'
 		}
@@ -561,15 +564,18 @@ fn (p mut Parser) fn_decl() {
 		// p.error('unclosed {')
 	}
 	// Make sure all vars in this function are used (only in main for now)
+	/*
 	if p.mod != 'main' {
 		p.genln('}')
 		return
 	}
+	*/
 	p.genln('}')
-	p.check_unused_variables()
-	p.set_current_fn( EmptyFn )
+	if !p.builtin_mod && p.mod != 'os' {
+		p.check_unused_and_mut_vars()
+	}
+	p.set_current_fn(EmptyFn)
 	p.returns = false
-
 }
 
 [inline]
@@ -611,12 +617,12 @@ fn (p &Parser) get_linkage_prefix() string {
 	}
 }
 
-fn (p mut Parser) check_unused_variables() {
+fn (p mut Parser) check_unused_and_mut_vars() {
 	for var in p.local_vars {
 		if var.name == '' {
 			break
 		}
-		if !var.is_used && !p.pref.is_repl && !var.is_arg &&
+		if !var.is_used && !p.pref.is_repl &&  !var.is_arg &&
 			!p.pref.translated && var.name != 'tmpl_res'
 		{
 			p.production_error_with_token_index('`$var.name` declared and not used', var.token_idx )
@@ -689,7 +695,7 @@ fn (p mut Parser) async_fn_call(f Fn, method_ph int, receiver_var, receiver_type
 	if p.os == .windows {
 		wrapper_type = 'DWORD WINAPI'
 	}
-	wrapper_text := '$wrapper_type $wrapper_name($arg_struct_name * arg) {$fn_name( /*f*/$str_args ); return 0; }'
+	wrapper_text := '$wrapper_type $wrapper_name ($arg_struct_name * arg) {$fn_name ( /*f*/$str_args ); return 0; }'
 	p.cgen.register_thread_fn(wrapper_name, wrapper_text, arg_struct)
 	// Create thread object
 	tmp_nr := p.get_tmp_counter()
@@ -753,7 +759,7 @@ fn (p mut Parser) fn_call(f mut Fn, method_ph int, receiver_var, receiver_type s
 				// probably a typo, do not concern the user with the above error message
 				break
 			}
-			i += 1
+			i++
 		}
 	}
 	// if p.pref.is_prof {
@@ -1021,13 +1027,15 @@ fn (p mut Parser) fn_call_args(f mut Fn) {
 				p.mutable_arg_error(i, arg, f)
 			}
 			if p.peek() != .name {
-				p.error('`$arg.name` is a mutable argument, you need to provide a variable to modify: `$f.name(... mut a...)`')
+				p.error('`$arg.name` is a mutable argument, you need to ' +
+					'provide a variable to modify: `${f.name}(... mut a...)`')
 			}
 			p.check(.key_mut)
 			p.fspace()
 			var_name := p.lit
 			v := p.find_var(var_name) or {
-				p.error('`$arg.name` is a mutable argument, you need to provide a variable to modify: `$f.name(... mut a...)`')
+				p.error('`$arg.name` is a mutable argument, you need to ' +
+					'provide a variable to modify: `${f.name}(... mut a...)`')
 				exit(1)
 			}
 			if !v.is_changed {
@@ -1153,7 +1161,7 @@ fn (p mut Parser) fn_call_args(f mut Fn) {
 				nr = 'third'
 			}
 			p.error('cannot use type `$typ` as type `$arg.typ` in $nr ' +
-				'argument to `$f.name()`')
+				'argument to `${f.name}()`')
 		} else {
 			saved_args << ''
 		}
@@ -1268,7 +1276,7 @@ fn (p mut Parser) extract_type_inst(f &Fn, args_ []string) TypeInst {
 				if fa == tp {
 					r.inst[tp] = fa
 					found = true
-					i += 1
+					i++
 					break
 				}
 			}
@@ -1284,7 +1292,7 @@ fn (p mut Parser) extract_type_inst(f &Fn, args_ []string) TypeInst {
 		}
 		// println("extracted $tp => $ti")
 		r.inst[tp] = ti
-		i += 1
+		i++
 		if i >= f.type_pars.len { break }
 	}
 	if r.inst[f.typ] == '' && f.typ in f.type_pars {
@@ -1346,7 +1354,7 @@ fn (p mut Parser) register_vargs_stuct(typ string, len int) string {
 	}
 	mut varg_len := len
 	if !p.table.known_type(vargs_struct) {
-		p.table.register_type2(varg_type)
+		p.table.register_type(varg_type)
 		p.cgen.typedefs << 'typedef struct $vargs_struct $vargs_struct;\n'
 	} else {
 		ex_typ := p.table.find_type(vargs_struct)
@@ -1365,7 +1373,7 @@ fn (p mut Parser) fn_call_vargs(f Fn) (string, []string) {
 		return '', []string
 	}
 	last_arg := f.args.last()
-	mut varg_def_type := last_arg.typ[3..]
+	//varg_def_type := last_arg.typ[3..]
 	mut types := []string
 	mut values := []string
 	for p.tok != .rpar {
@@ -1418,7 +1426,7 @@ fn (p mut Parser) fn_gen_caller_vargs(f &Fn, varg_type string, values []string) 
 fn (p mut Parser) register_multi_return_stuct(types []string) string {
 	typ := '_V_MulRet_' + types.join('_V_').replace('*', '_PTR_')
 	if p.table.known_type(typ) { return typ }
-	p.table.register_type2(Type{
+	p.table.register_type(Type{
 		cat: .struct_,
 		name: typ,
 		mod: p.mod
@@ -1450,7 +1458,7 @@ fn (p mut Parser) dispatch_generic_fn_instance(f mut Fn, ti &TypeInst) {
 	}
 	if !new_inst {
 		rename_generic_fn_instance(mut f, ti)
-		_f := p.table.find_fn(f.name) or {
+		_ = p.table.find_fn(f.name) or {
 			p.error('function instance `$f.name` not found')
 			return
 		}
@@ -1572,7 +1580,7 @@ fn (fns []Fn) contains(f Fn) bool {
 	return false
 }
 fn (p &Parser) fn_signature(f &Fn) string {
-	return '$f.typ $f.name(${f.str_args(p.table)})'
+	return '$f.typ ${f.name}(${f.str_args(p.table)})'
 }
 
 pub fn (f &Fn) v_fn_module() string {

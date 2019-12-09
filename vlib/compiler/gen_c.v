@@ -60,7 +60,7 @@ fn (p mut Parser) gen_fn_decl(f Fn, typ, str_args string) {
 	}
 	fn_name_cgen := p.table.fn_gen_name(f)
 	//str_args := f.str_args(p.table)
-	p.genln('$dll_export_linkage$typ $fn_name_cgen($str_args) {')
+	p.genln('$dll_export_linkage$typ $fn_name_cgen ($str_args) {')
 }
 
 // blank identifer assignment `_ = 111`
@@ -74,7 +74,7 @@ fn (p mut Parser) gen_blank_identifier_assign() {
 	p.is_var_decl = true
 	typ := p.bool_expression()
 	if typ == 'void' {
-		p.error_with_token_index('$next_expr() $err_used_as_value', p.token_idx-2)
+		p.error_with_token_index('${next_expr}() $err_used_as_value', p.token_idx-2)
 	}
 	p.is_var_decl = false
 	if !is_indexer && !is_fn_call {
@@ -260,6 +260,7 @@ fn (table mut Table) fn_gen_name(f &Fn) string {
 				`*` { name = name.replace('*', 'op_mul') }
 				`/` { name = name.replace('/', 'op_div') }
 				`%` { name = name.replace('%', 'op_mod') }
+				else {}
 			}
 		}
 	}
@@ -365,6 +366,12 @@ fn (p mut Parser) gen_for_header(i, tmp, var_typ, val string) {
 	p.genln('$var_typ $val = (($var_typ *) $tmp . data)[$i];')
 }
 
+fn (p mut Parser) gen_for_fixed_header(i, tmp, var_typ, val string) {
+	p.genln('for (int $i = 0; $i < sizeof(${tmp}) / sizeof($tmp [0]); $i++) {')
+	if val == '_' { return }
+	p.genln('$var_typ $val = $tmp[$i];')
+}
+
 fn (p mut Parser) gen_for_str_header(i, tmp, var_typ, val string) {
 	// TODO var_typ is always byte
 	//p.genln('array_byte bytes_$tmp = string_bytes( $tmp );')
@@ -410,7 +417,7 @@ fn (p mut Parser) gen_array_init(typ string, no_alloc bool, new_arr_ph int, nr_e
 	// Need to do this in the second pass, otherwise it goes to the very top of the out.c file
 	if !p.first_pass() {
 		p.cgen.set_placeholder(new_arr_ph,
-			'$new_arr($nr_elems, $nr_elems, sizeof($typ), EMPTY_ARRAY_OF_ELEMS( $typ, $nr_elems ) { ')
+			'${new_arr}($nr_elems, $nr_elems, sizeof($typ), EMPTY_ARRAY_OF_ELEMS( $typ, $nr_elems ) { ')
 	}
 }
 
@@ -487,7 +494,7 @@ fn (p mut Parser) gen_struct_init(typ string, t Type) bool {
 	else {
 		if p.tok == .not {
 			// old &User{!} ==> 0 hack
-			p.error('use `$t.name(0)` instead of `&$t.name{!}`')
+			p.error('use `${t.name}(0)` instead of `&$t.name{!}`')
 			/*
 			p.next()
 			p.gen('0')
@@ -521,6 +528,10 @@ fn (p mut Parser) cast(typ string) {
 	p.check(.lpar)
 	p.expected_type = typ
 	expr_typ := p.bool_expression()
+	// Do not allow `int(my_int)`
+	if expr_typ == typ {
+		p.warn('casting `$typ` to `$expr_typ` is not needed')
+	}
 	// `face := FT_Face(cobj)` => `FT_Face face = *((FT_Face*)cobj);`
 	casting_voidptr_to_value :=  expr_typ == 'void*' && typ != 'int' &&
 		typ != 'byteptr' &&		!typ.ends_with('*')
@@ -596,24 +607,50 @@ fn type_default(typ string) string {
 		return '{0}'
 	}
 	// Default values for other types are not needed because of mandatory initialization
-	match typ {
-	'bool'{ return '0'}
-	'string'{ return 'tos3("")'}
-	'i8'{ return '0'}
-	'i16'{ return '0'}
-	'i64'{ return '0'}
-	'u16'{ return '0'}
-	'u32'{ return '0'}
-	'u64'{ return '0'}
-	'byte'{ return '0'}
-	'int'{ return '0'}
-	'rune'{ return '0'}
-	'f32'{ return '0.0'}
-	'f64'{ return '0.0'}
-	'byteptr'{ return '0'}
-	'voidptr'{ return '0'}
+	 match typ {
+ 'bool'{ return '0'}
+ 'string'{ return 'tos3("")'}
+ 'i8'{ return '0'}
+ 'i16'{ return '0'}
+ 'i64'{ return '0'}
+ 'u16'{ return '0'}
+ 'u32'{ return '0'}
+ 'u64'{ return '0'}
+ 'byte'{ return '0'}
+ 'int'{ return '0'}
+ 'rune'{ return '0'}
+ 'f32'{ return '0.0'}
+ 'f64'{ return '0.0'}
+ 'byteptr'{ return '0'}
+ 'voidptr'{ return '0'}
+else {}
+ }
+ return '{0}'
+
+
+	// TODO this results in
+	// error: expected a field designator, such as '.field = 4'
+	//- Empty ee= (Empty) { . =  {0}  } ;
+	/*
+	return match typ {
+		'bool'{ '0'}
+		'string'{ 'tos3("")'}
+		'i8'{ '0'}
+		'i16'{ '0'}
+		'i64'{ '0'}
+		'u16'{ '0'}
+		'u32'{ '0'}
+		'u64'{ '0'}
+		'byte'{ '0'}
+		'int'{ '0'}
+		'rune'{ '0'}
+		'f32'{ '0.0'}
+		'f64'{ '0.0'}
+		'byteptr'{ '0'}
+		'voidptr'{ '0'}
+		else { '{0} '}
 	}
-	return '{0}'
+	*/
 }
 
 fn (p mut Parser) gen_array_push(ph int, typ, expr_type, tmp, elm_type string) {
