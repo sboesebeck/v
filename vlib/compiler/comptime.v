@@ -178,7 +178,7 @@ fn (p mut Parser) comp_time() {
 		p.genln('/////////////////// tmpl end')
 		receiver := p.cur_fn.args[0]
 		dot := if receiver.is_mut || receiver.ptr || receiver.typ.ends_with('*') { '->' } else { '.' }
-		p.genln('vweb__Context_html($receiver.name /*!*/$dot vweb, tmpl_res)')
+		p.genln('vweb__Context_html( & $receiver.name /*!*/$dot vweb, tmpl_res)')
 	}
 	else {
 		p.error('bad comptime expr')
@@ -314,7 +314,7 @@ fn (p mut Parser) gen_array_str(typ Type) {
 		p.error('cant print ${elm_type}[], unhandled print of ${elm_type}')
 	}
 	p.v.vgen_buf.writeln('
-fn (a $typ.name) str() string {
+pub fn (a $typ.name) str() string {
 	mut sb := strings.new_builder(a.len * 3)
 	sb.write("[")
 	for i, elm in a {
@@ -342,7 +342,7 @@ fn (p mut Parser) gen_struct_str(typ Type) {
 	})
 
 	mut sb := strings.new_builder(typ.fields.len * 20)
-	sb.writeln('fn (a $typ.name) str() string {\nreturn')
+	sb.writeln('pub fn (a $typ.name) str() string {\nreturn')
 	sb.writeln("'{")
 	for field in typ.fields {
 		sb.writeln('\t$field.name: $' + 'a.${field.name}')
@@ -366,7 +366,7 @@ fn (p mut Parser) gen_varg_str(typ Type) {
 		p.gen_struct_str(elm_type2)
 	}
 	p.v.vgen_buf.writeln('
-fn (a $typ.name) str() string {
+pub fn (a $typ.name) str() string {
 	mut sb := strings.new_builder(a.len * 3)
 	sb.write("[")
 	for i, elm in a {

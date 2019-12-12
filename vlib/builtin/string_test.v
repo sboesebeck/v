@@ -219,6 +219,27 @@ fn test_replace() {
 	assert c.replace('','-') == c
 }
 
+fn test_replace_each() {
+	s := 'hello man man :)'
+	q := s.replace_each([
+		'man', 'dude',
+		'hello', 'hey'
+	])
+	assert q == 'hey dude dude :)'
+	bb := '[b]bold[/b] [code]code[/code]'
+	assert bb.replace_each([
+		'[b]', '<b>',
+		'[/b]', '</b>',
+		'[code]', '<code>',
+		'[/code]', '</code>'
+	]) == '<b>bold</b> <code>code</code>'
+	bb2 := '[b]cool[/b]'
+	assert bb2.replace_each([
+		'[b]', '<b>',
+		'[/b]', '</b>',
+	]) == '<b>cool</b>'
+}
+
 fn test_itoa() {
 	num := 777
 	assert num.str() == '777'
