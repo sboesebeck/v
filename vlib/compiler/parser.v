@@ -447,6 +447,7 @@ fn (p mut Parser) parse(pass Pass) {
 				.key_union,
 				.key_interface {	p.struct_decl() }
 				.key_enum      {	p.enum_decl(false) }
+				.key_type      { p.type_decl() }
 				else {
 					p.error('wrong pub keyword usage')
 				}
@@ -734,6 +735,10 @@ fn (p mut Parser) const_decl() {
 // `type myint int`
 // `type onclickfn fn(voidptr) int`
 fn (p mut Parser) type_decl() {
+	is_pub := p.tok == .key_pub
+	if is_pub {
+		p.next()
+	}
 	p.check(.key_type)
 	name := p.check_name()
 	// V used to have 'type Foo struct', many Go users might use this syntax
@@ -757,6 +762,7 @@ fn (p mut Parser) type_decl() {
 		parent: parent.name
 		mod: p.mod
 		cat: .alias
+		is_public: is_pub
 	})
 }
 
@@ -1307,6 +1313,12 @@ fn (p mut Parser) statement(add_semi bool) string {
 		p.return_st()
 	}
 	.lcbr {// {} block
+		// Do not allow {} block to start on the same line
+		// to avoid e.g. `foo() {` instead of `if foo() {`
+		if p.prev_token().line_nr == p.scanner.line_nr {
+			p.genln('')
+			p.error('{} block has to start on a new line')
+		}
 		p.check(.lcbr)
 		if p.tok == .rcbr {
 			p.error('empty statements block')
@@ -2131,7 +2143,10 @@ fn (p mut Parser) index_expr(typ_ string, fn_ph int) string {
 		// }
 		if is_indexer {
 			l := p.cgen.cur_line.trim_space()
-			index_val := l[l.last_index(' ')..].trim_space()
+			idx := l.last_index(' ') or {
+				panic('idx')
+			}
+			index_val := l[idx..].trim_space()
 			p.cgen.resetln(l[..fn_ph])
 			p.table.varg_access << VargAccess{
 				fn_name: p.cur_fn.name,
@@ -2256,13 +2271,19 @@ fn (p mut Parser) assoc() string {
 	}
 	p.check(.pipe)
 	p.gen('($var.typ){')
+	typ := p.table.find_type(var.typ)
 	mut fields := []string// track the fields user is setting, the rest will be copied from the old object
 	for p.tok != .rcbr {
 		field := p.check_name()
+		//if !typ.has_field(field) {
+		f := typ.find_field(field) or {
+			p.error('`$typ.name` has no field `$field`')
+			exit(1)
+		}
 		fields << field
 		p.gen('.$field = ')
 		p.check(.colon)
-		p.bool_expression()
+		p.check_types(p.bool_expression(), f.typ)
 		p.gen(',')
 		if p.tok != .rcbr {
 			p.check(.comma)
@@ -2270,8 +2291,7 @@ fn (p mut Parser) assoc() string {
 		p.fgen_nl()
 	}
 	// Copy the rest of the fields
-	T := p.table.find_type(var.typ)
-	for ffield in T.fields {
+	for ffield in typ.fields {
 		f := ffield.name
 		if f in fields {
 			continue
