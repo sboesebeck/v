@@ -7,6 +7,7 @@
 
 module main
 
+import filepath
 import rand
 import time
 import os
@@ -19,7 +20,7 @@ import sdl.ttf as ttf
 
 const (
 	Title = 'tVintris'
-	BASE = os.dir( os.realpath( os.executable() ) )
+	BASE = filepath.dir( os.realpath( os.executable() ) )
 	FontName = BASE + '/fonts/RobotoMono-Regular.ttf'
 	MusicName = BASE + '/sounds/TwintrisThosenine.mod'
 	SndBlockName = BASE + '/sounds/block.wav'
@@ -151,8 +152,7 @@ mut:
 }
 
 struct SdlContext {
-pub:
-mut:
+pub mut:
 //	VIDEO
 	w		int
 	h		int
@@ -292,7 +292,7 @@ fn main() {
 	game.sdl.jids[1] = -1
 	game.sdl.set_sdl_context(WinWidth, WinHeight, Title)
 	game.font = C.TTF_OpenFont(FontName.str, TextSize)
-	seed := time.now().uni
+	seed := time.now().unix
 	mut game2 := &Game{ font: 0 }
 	game2.sdl = game.sdl
 	game2.font = game.font
@@ -374,12 +374,12 @@ fn main() {
 		g.draw_end()
 
 //		game.handle_events()            // CRASHES if done in function ???
-		ev := sdl.Event{}
-		for 0 < sdl.poll_event(&ev) {
-			match int(ev._type) {
+		evt := SDL_Event{}
+		for 0 < sdl.poll_event(&evt) {
+			match int(evt.@type) {
 				C.SDL_QUIT { should_close = true }
 				C.SDL_KEYDOWN {
-					key := ev.key.keysym.sym
+					key := evt.key.keysym.sym
 					if key == C.SDLK_ESCAPE {
 					        should_close = true
 					        break
@@ -388,16 +388,16 @@ fn main() {
 					game2.handle_key(key)
 				}
 				C.SDL_JOYBUTTONDOWN {
-					jb := int(ev.jbutton.button)
-					joyid := ev.jbutton.which
+					jb := int(evt.jbutton.button)
+					joyid := evt.jbutton.which
 //					println('JOY BUTTON $jb $joyid')
 					game.handle_jbutton(jb, joyid)
 					game2.handle_jbutton(jb, joyid)
 				}
 				C.SDL_JOYHATMOTION {
-					jh := int(ev.jhat.hat)
-					jv := int(ev.jhat.value)
-					joyid := ev.jhat.which
+					jh := int(evt.jhat.hat)
+					jv := int(evt.jhat.value)
+					joyid := evt.jhat.which
 //					println('JOY HAT $jh $jv $joyid')
 					game.handle_jhat(jh, jv, joyid)
 					game2.handle_jhat(jh, jv, joyid)

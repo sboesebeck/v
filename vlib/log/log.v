@@ -44,10 +44,9 @@ pub struct Log {
 mut:
 	level LogLevel
 	output_label string
-
 	ofile os.File
 	output_to_file bool
-pub:
+pub mut:
 	output_file_name string
 }
 
@@ -68,8 +67,8 @@ pub fn (l mut Log) set_output_level(level LogLevel){
 
 pub fn (l mut Log) set_full_logpath(full_log_path string) {
 	rlog_file := os.realpath( full_log_path )
-	l.set_output_label( os.filename( rlog_file ) )
-	l.set_output_path( os.basedir( rlog_file ) )
+	l.set_output_label( filepath.filename( rlog_file ) )
+	l.set_output_path( filepath.basedir( rlog_file ) )
 }
 
 pub fn (l mut Log) set_output_label(label string){

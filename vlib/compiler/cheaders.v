@@ -1,8 +1,34 @@
 module compiler
 
 const (
+	c_common_macros = '
 
-c_headers = '
+#define EMPTY_STRUCT_DECLARATION
+#define EMPTY_STRUCT_INITIALIZATION 0
+// Due to a tcc bug, the length of an array needs to be specified, but GCC crashes if it is...
+#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[])
+#define TCCSKIP(x) x
+
+#ifdef __TINYC__
+#undef EMPTY_STRUCT_DECLARATION
+#undef EMPTY_STRUCT_INITIALIZATION
+#define EMPTY_STRUCT_DECLARATION char _dummy
+#define EMPTY_STRUCT_INITIALIZATION 0
+#undef EMPTY_ARRAY_OF_ELEMS
+#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[n])
+#undef TCCSKIP
+#define TCCSKIP(x)
+#endif
+
+// for __offset_of
+#ifndef __offsetof
+#define __offsetof(s,memb) \\
+    ((size_t)((char *)&((s *)0)->memb - (char *)0))
+#endif
+
+#define OPTION_CAST(x) (x)
+'
+	c_headers = '
 
 //#include <inttypes.h>  // int64_t etc
 #include <stdio.h>  // TODO remove all these includes, define all function signatures and types manually
@@ -69,24 +95,7 @@ c_headers = '
 #include <sys/wait.h> // os__wait uses wait on nix
 #endif
 
-#define EMPTY_STRUCT_DECLARATION
-#define EMPTY_STRUCT_INITIALIZATION 0
-// Due to a tcc bug, the length of an array needs to be specified, but GCC crashes if it is...
-#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[])
-#define TCCSKIP(x) x
-
-#ifdef __TINYC__
-#undef EMPTY_STRUCT_DECLARATION
-#undef EMPTY_STRUCT_INITIALIZATION
-#define EMPTY_STRUCT_DECLARATION char _dummy
-#define EMPTY_STRUCT_INITIALIZATION 0
-#undef EMPTY_ARRAY_OF_ELEMS
-#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[n])
-#undef TCCSKIP
-#define TCCSKIP(x)
-#endif
-
-#define OPTION_CAST(x) (x)
+$c_common_macros
 
 #ifdef _WIN32
 #define WINVER 0x0600
@@ -137,12 +146,11 @@ c_headers = '
 #define DEFAULT_GT(a, b) (a > b)
 #define DEFAULT_GE(a, b) (a >= b)
 //================================== GLOBALS =================================*/
-byteptr g_str_buf;
+byte g_str_buf[1024];
 int load_so(byteptr);
 void reload_so();
 '
-
-js_headers = '
+	js_headers = '
 
 var array_string = function() {}
 var array_byte = function() {}
@@ -165,9 +173,7 @@ var map_string = function() {}
 var map_int = function() {}
 
 '
-
-
-c_builtin_types = '
+	c_builtin_types = '
 
 //#include <inttypes.h>  // int64_t etc
 //#include <stdint.h>  // int64_t etc
@@ -206,22 +212,9 @@ typedef map map_string;
 	#define false 0
 #endif
 '
+	bare_c_headers = '
 
-bare_c_headers = '
-
-#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[])
-#define TCCSKIP(x) x
-
-#ifdef __TINYC__
-#undef EMPTY_ARRAY_OF_ELEMS
-#define EMPTY_ARRAY_OF_ELEMS(x,n) (x[n])
-#undef TCCSKIP
-#define TCCSKIP(x)
-#endif
-
-#ifndef EMPTY_STRUCT_INITIALIZATION
-#define EMPTY_STRUCT_INITIALIZATION 0
-#endif
+$c_common_macros
 
 #ifndef exit
 #define exit(rc) sys_exit(rc)
@@ -229,3 +222,4 @@ void sys_exit (int);
 #endif
 '
 )
+

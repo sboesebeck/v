@@ -35,7 +35,7 @@ Installing V: [github.com/vlang/v#installing-v-from-source](https://github.com/v
 - Built-in ORM
 - C and JavaScript backends
 
-A stable 0.2 release is planned for early December 2019. Right now V is in an alpha stage.
+A stable 0.2 release is planned for January 2020. Right now V is in an alpha stage.
 
 ## Installing V from source
 
@@ -63,7 +63,7 @@ You'll need Clang or GCC or Visual Studio. If you are doing development, you mos
 
 Otherwise, follow these instructions:
 
-[https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-macOS](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-macOS)
+[github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-macOS](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-macOS)
 
 [github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows)
 

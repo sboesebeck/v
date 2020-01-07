@@ -10,6 +10,7 @@ import (
 	gg
 	glm
 	gl
+	filepath
 )
 
 #flag windows -I @VROOT/thirdparty/freetype/include
@@ -18,7 +19,7 @@ import (
 #flag darwin -I/usr/local/include/freetype2
 #flag darwin -I/opt/local/include/freetype2
 #flag freebsd -I/usr/local/include/freetype2
-#flag freebsd -Wl,-L/usr/local/lib
+#flag freebsd -Wl -L/usr/local/lib
 #flag -lfreetype
 
 //#flag -I @VROOT/thirdparty/freetype
@@ -175,7 +176,7 @@ pub fn new_context(cfg gg.Cfg) &FreeType {
 	}
 	if !os.exists(font_path) {
 		exe_path := os.executable()
-		exe_dir := os.basedir(exe_path)
+		exe_dir := filepath.basedir(exe_path)
 		font_path = '$exe_dir/$font_path'
 	}
 	if !os.exists(font_path) {
@@ -234,24 +235,6 @@ pub fn new_context(cfg gg.Cfg) &FreeType {
 	//ctx.init_utf8_runes()
 	return ctx
 }
-
-/*
-// A dirty hack to implement rendering of cyrillic letters.
-// All UTF-8 must be supported. update: no longer needed
-fn (ctx mut FreeType) init_utf8_runes() {
-	s := '≈≠⩽⩾йцукенгшщзхъфывапролджэячсмитьбюЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ'
-	print('init utf8 runes: ')
-	//println(s)
-	us := s.ustring()
-	for i := 0; i < us.len; i++ {
-		_rune := us.at(i)
-		ch := ft_load_char(ctx.face, _rune.utf32_code())
-		// ctx.utf_rune_map.set(rune, ch)
-		ctx.utf_runes << _rune
-		ctx.utf_chars << ch
-	}
-}
-*/
 
 pub fn (ctx mut FreeType) draw_text(_x, _y int, text string, cfg gx.TextCfg) {
 	//utext := text.ustring_tmp()

@@ -2,7 +2,7 @@ module sqlite
 
 #flag -lsqlite3
 #flag freebsd -I/usr/local/include
-#flag freebsd -Wl,-L/usr/local/lib,-lsqlite3
+#flag freebsd -Wl -L/usr/local/lib -lsqlite3
 #include "sqlite3.h"
 
 struct C.sqlite3
@@ -44,7 +44,6 @@ pub fn (db DB) q_string(query string) string {
 	stmt := &C.sqlite3_stmt(0)
 	C.sqlite3_prepare_v2(db.conn, query.str, - 1, &stmt, 0)
 	C.sqlite3_step(stmt)
-	f := C.sqlite3_column_text(stmt, 0)
 	res := tos_clone(C.sqlite3_column_text(stmt, 0))
 	C.sqlite3_finalize(stmt)
 	return res
