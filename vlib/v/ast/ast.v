@@ -9,7 +9,7 @@ import (
 )
 
 pub type Expr = BinaryExpr | UnaryExpr | IfExpr | StringLiteral | IntegerLiteral | 	
-FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr | AssignExpr | PrefixExpr | MethodCallExpr
+FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr | AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr
 
 pub type Stmt = VarDecl | FnDecl | Return | Module | Import | ExprStmt | 	
 ForStmt | StructDecl | ForCStmt | ForInStmt
@@ -121,7 +121,7 @@ pub:
 
 pub struct Return {
 pub:
-	expr Expr
+	exprs []Expr
 }
 
 /*
@@ -189,6 +189,13 @@ pub struct PrefixExpr {
 pub:
 	op    token.Kind
 	right Expr
+}
+
+pub struct IndexExpr {
+pub:
+// op   token.Kind
+	left  Expr
+	index Expr
 }
 
 pub struct IfExpr {

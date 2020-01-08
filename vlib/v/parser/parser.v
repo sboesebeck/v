@@ -168,6 +168,12 @@ pub fn (p mut Parser) top_stmt() ast.Stmt {
 		.key_struct {
 			return p.struct_decl()
 		}
+		.lsbr {
+			p.next()
+			p.check(.name)
+			p.check(.rsbr)
+			return ast.Module{}
+		}
 		else {
 			p.error('bad top level statement')
 			return ast.Module{} // silence C warning
@@ -263,6 +269,10 @@ pub fn (p mut Parser) name_expr() (ast.Expr,types.TypeIdent) {
 		p.next()
 		p.check(.dot)
 	}
+	else if p.tok.lit in ['strings'] {
+		p.next()
+		p.check(.dot)
+	}
 	// fn call
 	if p.peek_tok.kind == .lpar {
 		x,ti2 := p.call_expr() // TODO `node,typ :=` should work
@@ -320,12 +330,12 @@ pub fn (p mut Parser) expr(precedence int) (ast.Expr,types.TypeIdent) {
 			node,ti = p.string_expr()
 		}
 		// -1, -a etc
-		.minus {
+		.minus, .amp {
 			node,ti = p.prefix_expr()
 		}
-		.amp {
-			p.next()
-		}
+		// .amp {
+		// p.next()
+		// }
 		.key_true, .key_false {
 			node = ast.BoolLiteral{
 				val: p.tok.kind == .key_true
@@ -357,11 +367,15 @@ pub fn (p mut Parser) expr(precedence int) (ast.Expr,types.TypeIdent) {
 			node = p.assign_expr(node)
 		}
 		else if p.tok.kind == .dot {
-			node,ti = p.dot_expr(node)
+			node,ti = p.dot_expr(node, ti)
+		}
+		else if p.tok.kind == .lsbr {
+			node,ti = p.index_expr(node)
 		}
 		else if p.tok.kind.is_infix() {
 			node,ti = p.infix_expr(node)
 		}
+		// Postfix
 		else if p.tok.kind in [.inc, .dec] {
 			node = ast.PostfixExpr{
 				op: p.tok.kind
@@ -389,11 +403,32 @@ fn (p mut Parser) prefix_expr() (ast.Expr,types.TypeIdent) {
 	return expr,ti
 }
 
-fn (p mut Parser) dot_expr(left ast.Expr) (ast.Expr,types.TypeIdent) {
+fn (p mut Parser) index_expr(left ast.Expr) (ast.Expr,types.TypeIdent) {
+	// println('index expr$p.tok.str() line=$p.tok.line_nr')
+	p.next()
+	println('start expr')
+	index,_ := p.expr(0)
+	println('end expr')
+	p.check(.rsbr)
+	println('got ]')
+	ti := types.int_ti
+	mut node := ast.Expr{}
+	node = ast.IndexExpr{
+		left: left
+		index: index
+	}
+	return node,ti
+}
+
+fn (p mut Parser) dot_expr(left ast.Expr, ti types.TypeIdent) (ast.Expr,types.TypeIdent) {
 	p.next()
 	field_name := p.check_name()
+	struc := p.table.types[ti.idx] as types.Struct
 	// Method call
 	if p.tok.kind == .lpar {
+		if !p.table.struct_has_method(struc, field_name) {
+			p.error('type `$struc.name` has no method `$field_name`')
+		}
 		p.next()
 		args := p.call_args()
 		println('method call $field_name')
@@ -405,10 +440,13 @@ fn (p mut Parser) dot_expr(left ast.Expr) (ast.Expr,types.TypeIdent) {
 		}
 		return node,types.int_ti
 	}
+	if !p.table.struct_has_field(struc, field_name) {
+		p.error('type `$struc.name` has no field  `$field_name`')
+	}
 	/*
 				// p.next()
 				field := p.check_name()
-				if !ti.type_kind in  [._placeholder, ._struct] {
+				if !ti.type_kind in  [.placeholder, .struct_] {
 					println('kind: $ti.str()')
 					p.error('cannot access field, `$ti.type_name` is not a struct')
 				}
@@ -492,7 +530,7 @@ fn (p mut Parser) for_statement() ast.Stmt {
 		if p.tok.kind != .semicolon {
 			mut typ := types.TypeIdent{}
 			cond,typ = p.expr(0)
-			if typ.kind != ._bool {
+			if typ.kind != .bool {
 				p.error('non-bool used as for condition')
 			}
 		}
@@ -544,7 +582,7 @@ fn (p mut Parser) if_expr() (ast.Expr,types.TypeIdent) {
 	p.check(.key_if)
 	cond,cond_ti := p.expr(0)
 	// if !types.check(types.bool_ti, cond_ti) {
-	if cond_ti.kind != ._bool {
+	if cond_ti.kind != .bool {
 		p.error('non-bool used as if condition')
 	}
 	stmts := p.parse_block()
@@ -618,31 +656,33 @@ fn (p mut Parser) array_init() (ast.Expr,types.TypeIdent) {
 			p.check(.comma)
 		}
 	}
+	type_idx,type_name := p.table.find_or_register_array(val_ti, 1)
+	array_ti := types.new_ti(.array, type_name, type_idx, 0)
 	mut node := ast.Expr{}
 	node = ast.ArrayInit{
-		ti: val_ti
+		ti: array_ti
 		exprs: exprs
 	}
 	p.check(.rsbr)
-	return node,val_ti
+	return node,array_ti
 }
 
 fn (p mut Parser) parse_number_literal() (ast.Expr,types.TypeIdent) {
 	lit := p.tok.lit
 	mut node := ast.Expr{}
-	mut ti := types.new_base_ti(._int, 0)
+	mut ti := types.int_ti
 	if lit.contains('.') {
 		node = ast.FloatLiteral{
 			// val: lit.f64()
 			val: lit
 		}
-		ti = types.new_base_ti(._f64, 0)
+		ti = types.new_builtin_ti(.f64, 0)
 	}
 	else {
 		node = ast.IntegerLiteral{
 			val: lit.int()
 		}
-		// ti = types.new_base_ti(._int, 0)
+		// ti = types.int_ti
 	}
 	p.next()
 	return node,ti
@@ -709,12 +749,37 @@ fn (p mut Parser) struct_decl() ast.StructDecl {
 
 fn (p mut Parser) return_stmt() ast.Return {
 	p.next()
-	expr,t := p.expr(0)
-	if !types.check(p.return_ti, t) {
-		p.warn('cannot use `$t.name` as type `$p.return_ti.name` in return argument')
+	// return expressions
+	mut exprs := []ast.Expr
+	// return type idents
+	mut got_tis := []types.TypeIdent
+	for {
+		expr,ti := p.expr(0)
+		exprs << expr
+		got_tis << ti
+		if p.tok.kind == .comma {
+			p.check(.comma)
+		}
+		else {
+			break
+		}
+	}
+	mut expected_tis := [p.return_ti]
+	if p.return_ti.kind == .multi_return {
+		mr_type := p.table.types[p.return_ti.idx] as types.MultiReturn
+		expected_tis = mr_type.tis
+	}
+	if expected_tis.len != got_tis.len {
+		p.error('wrong number of return arguments:\n\texpected: $expected_tis.str()\n\tgot: $got_tis.str()')
+	}
+	for i, exp_ti in expected_tis {
+		got_ti := got_tis[i]
+		if !types.check(got_ti, exp_ti) {
+			p.error('cannot use `$got_ti.name` as type `$exp_ti.name` in return argument')
+		}
 	}
 	return ast.Return{
-		expr: expr
+		exprs: exprs
 	}
 }
 

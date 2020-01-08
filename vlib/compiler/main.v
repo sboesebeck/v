@@ -8,9 +8,7 @@ import (
 	os.cmdline
 	strings
 	filepath
-	//compiler.x64
 	v.gen.x64
-	//v.types
 	v.table
 	v.parser
 	v.gen
@@ -431,14 +429,6 @@ pub fn (v mut V) compile_x64() {
 	println('PARSE: ${time.ticks() - ticks}ms')
 	x64.gen(files, v.out_name)
 	println('x64 GEN: ${time.ticks() - ticks}ms')
-	/*
-	for f in v.files {
-		v.parse(f, .decl)
-	}
-	for f in v.files {
-		v.parse(f, .main)
-	}
-	*/
 }
 
 fn (v mut V) generate_init() {
