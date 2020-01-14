@@ -488,7 +488,9 @@ fn (p mut Parser) gen_struct_init(typ string, t &Type) bool {
 	if typ == 'tm' {
 		p.cgen.lines[p.cgen.lines.len - 1] = ''
 	}
-	p.next()
+	if p.tok != .lcbr {
+		p.next()
+	}
 	p.check(.lcbr)
 	ptr := typ.contains('*')
 	// `user := User{foo:bar}` => `User user = (User){ .foo = bar}`
@@ -627,6 +629,9 @@ fn type_default(typ string) string {
 	// User struct defined in another module.
 	if typ.contains('__') {
 		return '{0}'
+	}
+	if typ.ends_with('Fn') { // TODO
+		return '0'
 	}
 	// Default values for other types are not needed because of mandatory initialization
 	match typ {
