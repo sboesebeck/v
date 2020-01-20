@@ -8,11 +8,7 @@ import (
 	os.cmdline
 	strings
 	filepath
-	v.gen.x64
-	v.table
-	v.parser
-	v.gen
-	time
+	v.builder
 )
 
 pub const (
@@ -391,28 +387,14 @@ pub fn (v mut V) compile2() {
 		println(v.files)
 	}
 	v.add_v_files_to_compile()
+	//v.files << v.dir
 	if v.pref.is_verbose {
 		println('all .v files:')
 		println(v.files)
 	}
-	table := table.new_table()
-	files := parser.parse_files(v.files, table)
-	c := gen.cgen(files, table)
-	println('out: $v.out_name_c')
-	os.write_file(v.out_name_c, c)
-	/*
-		cgen.genln(c_builtin_types)
-
-		if !v.pref.is_bare {
-			cgen.genln(c_headers)
-		}
-		else {
-			cgen.genln(bare_c_headers)
-		}
-	}
-	*/
+	mut b := builder.new_builder()
+	b.build_c(v.files, v.out_name)
 	v.cc()
-
 }
 
 pub fn (v mut V) compile_x64() {
@@ -423,12 +405,8 @@ pub fn (v mut V) compile_x64() {
 	//v.files << v.v_files_from_dir(filepath.join(v.pref.vlib_path,'builtin','bare'))
 	v.files << v.dir
 
-	table := &table.new_table()
-	ticks := time.ticks()
-	files := parser.parse_files(v.files, table)
-	println('PARSE: ${time.ticks() - ticks}ms')
-	x64.gen(files, v.out_name)
-	println('x64 GEN: ${time.ticks() - ticks}ms')
+	mut b := builder.new_builder()
+	b.build_x64(v.files, v.out_name)
 }
 
 fn (v mut V) generate_init() {
@@ -828,9 +806,9 @@ pub fn (v &V) get_user_files() []string {
 	// Need to store user files separately, because they have to be added after
 	// libs, but we dont know	which libs need to be added yet
 	mut user_files := []string
-    
+
     // See tools/preludes/README.md for more info about what preludes are
-	vroot := filepath.dir(vexe_path())    
+	vroot := filepath.dir(vexe_path())
 	preludes_path := filepath.join(vroot,'tools','preludes')
 	if v.pref.is_live {
 		user_files << filepath.join(preludes_path,'live_main.v')
@@ -844,7 +822,7 @@ pub fn (v &V) get_user_files() []string {
 	if v.pref.is_test && v.pref.is_stats {
 		user_files << filepath.join(preludes_path,'tests_with_stats.v')
 	}
-    
+
 	is_test := dir.ends_with('_test.v')
 	mut is_internal_module_test := false
 	if is_test {
