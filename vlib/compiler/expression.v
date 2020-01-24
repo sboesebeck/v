@@ -1,4 +1,4 @@
-// Copyright (c) 2019 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2020 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module compiler
@@ -903,7 +903,7 @@ fn (p mut Parser) factor() string {
 				return p.map_init()
 			}
 			peek2 := p.tokens[p.token_idx + 1]
-			if p.peek() == .name && peek2.tok == .colon {
+			if p.peek() == .rcbr || (p.peek() == .name && peek2.tok == .colon) {
 				if !p.expected_type.ends_with('Config') {
 					p.error('short struct initialization syntax only works with structs that end with `Config`')
 				}
