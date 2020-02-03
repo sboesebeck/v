@@ -1,18 +1,27 @@
-import moda
-import modb as mb
+//import moda
+//import modb as mb
+
+const (
+	pi = 3
+	//s = 'hi'
+
+)
 
 struct User {
 	age int
 }
 
-// lol
 fn main() {
 	a := 10
+	//bb := 2 + 'hi'
 	a++
 	negative := -a
+	2 < 3
 	a == 1
+	a++
 	foo(3)
 	ak := 10
+	mypi := pi
 }
 	/*
 	user := User{}
@@ -31,16 +40,32 @@ fn foo(a int) {
 
 	}
 	nums := [1,2,3]
+	nums2 := nums[..2]
 	number := nums[0]
+	bools := [true, false]
+	b := bools[0]
+	mystrings := ['a', 'b']
+	s := mystrings[0]
+	//////////
+	mut x := 0
+	x=get_int2()
 	n := get_int2()
+	q := true || false
+	b2 := bools[0] || true
+	b3 := get_bool() || true
 }
 
 fn get_int(a string) int {
 	return 10
 }
 
+fn get_bool() bool {
+	return true
+}
+
 fn get_int2() int {
 	a := 'hello'
+	//return get_int('sdf')
 	return get_int(a)
 }
 
@@ -59,4 +84,11 @@ fn multi_return() (int,string) {
 
 fn variadic(a ...int) {
 }
+
+fn ensure_cap(required int, cap int) {
+	if required < cap {
+		return
+	}
+}
+
 

@@ -5,20 +5,21 @@ module ast
 
 import (
 	v.token
-	v.types
+	v.table
 )
 
-pub type Expr = BinaryExpr | UnaryExpr | IfExpr | StringLiteral | IntegerLiteral | 	
-FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr | AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr
+pub type Expr = InfixExpr | IfExpr | StringLiteral | IntegerLiteral | 	
+FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr | 	
+AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr | RangeExpr
 
-pub type Stmt = VarDecl | FnDecl | Return | Module | Import | ExprStmt | 	
-ForStmt | StructDecl | ForCStmt | ForInStmt
+pub type Stmt = VarDecl | GlobalDecl | FnDecl | Return | Module | Import | ExprStmt | 	
+ForStmt | StructDecl | ForCStmt | ForInStmt | CompIf | ConstDecl | Attr
 // | IncDecStmt k
 // Stand-alone expression in a statement list.
 pub struct ExprStmt {
 pub:
 	expr Expr
-	ti   types.TypeIdent
+	ti   table.Type
 }
 
 pub struct IntegerLiteral {
@@ -62,7 +63,13 @@ pub struct Field {
 pub:
 	name string
 	// type_idx int
-	ti   types.TypeIdent
+	typ  table.Type
+}
+
+pub struct ConstDecl {
+pub:
+	fields []Field
+	exprs  []Expr
 }
 
 pub struct StructDecl {
@@ -76,7 +83,7 @@ pub:
 pub struct StructInit {
 pub:
 	pos    token.Position
-	ti     types.TypeIdent
+	ti     table.Type
 	fields []string
 	exprs  []Expr
 }
@@ -92,7 +99,7 @@ pub:
 
 pub struct Arg {
 pub:
-	ti   types.TypeIdent
+	ti   table.Type
 	name string
 }
 
@@ -100,7 +107,7 @@ pub struct FnDecl {
 pub:
 	name     string
 	stmts    []Stmt
-	ti       types.TypeIdent
+	ti       table.Type
 	args     []Arg
 	is_pub   bool
 	receiver Field
@@ -108,33 +115,33 @@ pub:
 
 pub struct CallExpr {
 pub:
-	// tok        token.Token
-	pos        token.Position
+// tok        token.Token
+	pos  token.Position
 mut:
-	// func       Expr
-	name       string
-	args       []Expr
+// func       Expr
+	name string
+	args []Expr
 }
 
 pub struct MethodCallExpr {
 pub:
-	// tok        token.Token
-	pos        token.Position
-	expr       Expr
-	name       string
-	args       []Expr
+// tok        token.Token
+	pos  token.Position
+	expr Expr
+	name string
+	args []Expr
 }
 
 pub struct Return {
 pub:
-	pos   token.Position
-	expected_ti types.TypeIdent // TODO: remove once checker updated
-	exprs []Expr
+	pos         token.Position
+	expected_ti table.Type // TODO: remove once checker updated
+	exprs       []Expr
 }
 
 /*
 pub enum Expr {
-	Binary(BinaryExpr)
+	Binary(InfixExpr)
 	If(IfExpr)
 	Integer(IntegerExpr)
 }
@@ -150,16 +157,25 @@ pub struct Stmt {
 
 pub struct VarDecl {
 pub:
+	name   string
+	expr   Expr
+	is_mut bool
+mut:
+	typ    table.Type
+	pos    token.Position
+}
+
+pub struct GlobalDecl {
+pub:
 	name string
 	expr Expr
-	is_mut bool
-	mut:
-	ti   types.TypeIdent
-	pos  token.Position
+mut:
+	typ  table.Type
 }
 
 pub struct File {
 pub:
+	path    string
 	mod     Module
 	imports []Import
 	stmts   []Stmt
@@ -168,7 +184,8 @@ pub:
 pub struct IdentVar {
 pub:
 	expr Expr
-	ti   types.TypeIdent
+	typ  table.Type
+	name string
 }
 
 type IdentInfo = IdentVar
@@ -176,6 +193,7 @@ type IdentInfo = IdentVar
 pub enum IdentKind {
 	blank_ident
 	variable
+	constant
 }
 
 // A single identifier
@@ -190,17 +208,19 @@ mut:
 	info     IdentInfo
 }
 
-pub struct BinaryExpr {
+pub struct InfixExpr {
 pub:
 // op    BinaryOp
-	op    token.Kind
-	pos   token.Position
-	left  Expr
-	// left_ti types.TypeIdent
-	right Expr
-	// right_ti types.TypeIdent
+	op         token.Kind
+	pos        token.Position
+	left       Expr
+	left_type  table.Type
+	right      Expr
+	right_type table.Type
 }
 
+/*
+// renamed to PrefixExpr
 pub struct UnaryExpr {
 pub:
 // tok_kind token.Kind
@@ -208,6 +228,8 @@ pub:
 	op   token.Kind
 	left Expr
 }
+*/
+
 
 pub struct PostfixExpr {
 pub:
@@ -224,8 +246,10 @@ pub:
 pub struct IndexExpr {
 pub:
 // op   token.Kind
+	pos   token.Position
 	left  Expr
-	index Expr
+	index Expr // [0], [start..end] etc
+	typ   table.Type
 }
 
 pub struct IfExpr {
@@ -234,14 +258,23 @@ pub:
 	cond       Expr
 	stmts      []Stmt
 	else_stmts []Stmt
-	ti         types.TypeIdent
+	ti         table.Type
 	left       Expr // `a` in `a := if ...`
+	pos        token.Position
+}
+
+pub struct CompIf {
+pub:
+	cond       Expr
+	stmts      []Stmt
+	else_stmts []Stmt
 }
 
 pub struct ForStmt {
 pub:
 	cond  Expr
 	stmts []Stmt
+	pos   token.Position
 }
 
 pub struct ForInStmt {
@@ -261,7 +294,7 @@ pub:
 
 pub struct ReturnStmt {
 	tok_kind token.Kind // or pos
-	pos		 token.Position
+	pos      token.Position
 	results  []Expr
 }
 
@@ -274,6 +307,11 @@ pub:
 }
 */
 
+// e.g. `[unsafe_fn]`
+pub struct Attr {
+pub:
+	name string
+}
 
 pub struct AssignExpr {
 pub:
@@ -287,18 +325,28 @@ pub struct ArrayInit {
 pub:
 	pos   token.Position
 	exprs []Expr
-	ti    types.TypeIdent
+	ti    table.Type
+}
+
+// s[10..20]
+pub struct RangeExpr {
+pub:
+	low  Expr
+	high Expr
 }
 
 // string representaiton of expr
 pub fn (x Expr) str() string {
 	match x {
-		BinaryExpr {
+		InfixExpr {
 			return '(${it.left.str()} $it.op.str() ${it.right.str()})'
 		}
-		UnaryExpr {
+		/*
+		PrefixExpr {
 			return it.left.str() + it.op.str()
 		}
+		*/
+
 		IntegerLiteral {
 			return it.val.str()
 		}

@@ -1,4 +1,4 @@
-// Copyright (c) 2019 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2020 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 
@@ -34,7 +34,7 @@ pub fn read(bytes_needed int) ?[]byte {
 
 fn getrandom(bytes_needed int, buffer voidptr) int {
 	if bytes_needed > read_batch_size {
-		panic('getrandom() dont request more thane $read_batch_size bytes at once.')
+		panic('getrandom() dont request more than $read_batch_size bytes at once.')
 	}
 	return C.syscall(C.SYS_getrandom, buffer, bytes_needed, 0)
 }
