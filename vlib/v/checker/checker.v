@@ -134,7 +134,7 @@ pub fn (c &Checker) selector_expr(selector_expr ast.SelectorExpr) table.Type {
 			return field.ti
 		}
 		else {
-			c.error('$ti.name is not a struct', selector_expr.pos)
+			c.error('`$typ.name` is not a struct', selector_expr.pos)
 		}
 	}
 	return table.void_type
@@ -186,7 +186,7 @@ pub fn (c &Checker) array_init(array_init ast.ArrayInit) table.Type {
 }
 
 fn (c &Checker) stmt(node ast.Stmt) {
-	match node {
+	match mut node {
 		ast.FnDecl {
 			for stmt in it.stmts {
 				c.stmt(stmt)
@@ -197,7 +197,11 @@ fn (c &Checker) stmt(node ast.Stmt) {
 		}
 		ast.VarDecl {
 			typ := c.expr(it.expr)
-			// println('var decl $typ.name  it.typ=$it.typ.name $it.pos.line_nr')
+			// it.typ = typ
+			// println('checker: var decl $typ.name  it.typ=$it.typ.name $it.pos.line_nr')
+			if typ.kind != .void {
+				it.typ = typ
+			}
 			// if it.typ.kind == .unresolved {
 			// it.ti = typ
 			// println('unresolved var')
@@ -284,22 +288,7 @@ pub fn (c &Checker) expr(node ast.Expr) table.Type {
 			return c.selector_expr(it)
 		}
 		ast.IndexExpr {
-			mut typ := c.expr(it.left)
-			if typ.name.starts_with('array_') {
-				elm_typ := typ.name[6..]
-				// TODO `typ = ... or ...`
-				x := c.table.find_type(elm_typ) or {
-					c.error(elm_typ, it.pos)
-					exit(0)
-				}
-				typ = x
-			}
-			else {
-				typ = table.int_type
-			}
-			return typ
-			// c.expr(it.index)
-			//return it.typ
+			return c.index_expr(it)
 		}
 		ast.IfExpr {
 			typ := c.expr(it.cond)
@@ -318,6 +307,43 @@ pub fn (c &Checker) expr(node ast.Expr) table.Type {
 		else {}
 	}
 	return table.void_type
+}
+
+pub fn (c &Checker) index_expr(node ast.IndexExpr) table.Type {
+	mut typ := c.expr(node.left)
+	mut is_range := false // TODO is_range := node.index is ast.RangeExpr
+	match node.index {
+		ast.RangeExpr {
+			is_range = true
+		}
+		else {}
+	}
+	// TODO
+	// info := ti.info as table.Array
+	// ti = p.table.types[info.elem_type_idx]
+	if typ.name.starts_with('array_') {
+		if is_range {} // `x[start..end]` has the same type as `x`
+		else {
+			elm_typ := typ.name[6..]
+			// TODO `typ = ... or ...`
+			x := c.table.find_type(elm_typ) or {
+				c.error(elm_typ, node.pos)
+				exit(0)
+			}
+			typ = x
+			// Check index type
+			index_type := c.expr(node.index)
+			if index_type.kind != .int {
+				c.error('non-integer index (type `$index_type.name`)', node.pos)
+			}
+		}
+	}
+	else {
+		typ = table.int_type
+	}
+	return typ
+	// c.expr(it.index)
+	// return it.typ
 }
 
 pub fn (c &Checker) error(s string, pos token.Position) {

@@ -78,8 +78,7 @@ jobs:
       run:  sudo ./v symlink
     - name: Set up pg database
       run: |
-        brew services start postgresql
-        sleep 3
+        pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start
         psql -d postgres -c 'select rolname from pg_roles'
         psql -d postgres -c 'create database customerdb;'
         psql -d customerdb -f examples/database/pg/mydb.sql
