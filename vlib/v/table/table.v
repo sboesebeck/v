@@ -32,7 +32,6 @@ pub:
 	is_mut    bool
 	is_const  bool
 	is_global bool
-	// expr   ast.Expr
 mut:
 	typ       Type
 }
@@ -249,6 +248,13 @@ pub fn (t mut Table) register_type(typ Type) int {
 	t.types << typ
 	t.type_idxs[typ.name] = idx
 	return idx
+}
+
+pub fn (t &Table) known_type(name string) bool {
+	_ = t.find_type(name) or {
+		return false
+	}
+	return true
 }
 
 pub fn (t mut Table) find_or_register_map(key_typ &Type, value_typ &Type) (int,string) {

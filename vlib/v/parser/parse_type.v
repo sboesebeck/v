@@ -2,7 +2,6 @@ module parser
 // Copyright (c) 2019-2020 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
-
 import (
 	v.table
 )
@@ -12,8 +11,9 @@ pub fn (p mut Parser) parse_array_ti(nr_muls int) table.Type {
 	// fixed array
 	if p.tok.kind == .number {
 		size := p.tok.lit.int()
-		p.check(.rsbr)
 		elem_ti := p.parse_type()
+		p.check(.rsbr)
+		p.check_name()
 		idx,name := p.table.find_or_register_array_fixed(&elem_ti, size, 1)
 		return table.new_type(.array_fixed, name, idx, nr_muls)
 	}
@@ -30,7 +30,10 @@ pub fn (p mut Parser) parse_array_ti(nr_muls int) table.Type {
 	return table.new_type(.array, name, idx, nr_muls)
 }
 
-pub fn (p mut Parser) parse_map_ti(nr_muls int) table.Type {
+pub fn (p mut Parser) parse_map_type(nr_muls int) table.Type {
+	if p.tok.kind != .lsbr {
+		return table.map_type
+	}
 	p.next()
 	p.check(.lsbr)
 	key_ti := p.parse_type()
@@ -66,7 +69,7 @@ pub fn (p mut Parser) parse_variadic_ti() table.Type {
 }
 
 pub fn (p mut Parser) parse_fn_type() table.Type {
-	//p.check(.key_fn)
+	// p.check(.key_fn)
 	p.fn_decl()
 	return table.int_type
 }
@@ -76,6 +79,10 @@ pub fn (p mut Parser) parse_type() table.Type {
 	for p.tok.kind == .amp {
 		p.check(.amp)
 		nr_muls++
+	}
+	if p.tok.lit == 'C' {
+		p.next()
+		p.check(.dot)
 	}
 	name := p.tok.lit
 	match p.tok.kind {
@@ -106,9 +113,8 @@ pub fn (p mut Parser) parse_type() table.Type {
 				p.next()
 			}
 			match name {
-				// map
 				'map' {
-					return p.parse_map_ti(nr_muls)
+					return p.parse_map_type(nr_muls)
 				}
 				'voidptr' {
 					return table.new_type(.voidptr, 'voidptr', table.voidptr_type_idx, nr_muls)
@@ -173,4 +179,3 @@ pub fn (p mut Parser) parse_type() table.Type {
 		}
 	}
 }
-

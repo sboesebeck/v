@@ -35,6 +35,7 @@ pub const (
 	char_type_idx = 15
 	byte_type_idx = 16
 	bool_type_idx = 17
+	map_type_idx = 18
 )
 
 pub enum Kind {
@@ -91,6 +92,16 @@ pub const (
 		kind: .bool
 		name: 'bool'
 		idx: bool_type_idx
+	}
+	byte_type = Type{
+		kind: .byte
+		name: 'byte'
+		idx: byte_type_idx
+	}
+	map_type = Type{
+		kind: .map
+		name: 'map'
+		idx: map_type_idx
 	}
 )
 /*
