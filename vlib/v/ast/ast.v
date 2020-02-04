@@ -13,7 +13,7 @@ FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | Selecto
 AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr | RangeExpr
 
 pub type Stmt = VarDecl | GlobalDecl | FnDecl | Return | Module | Import | ExprStmt | 	
-ForStmt | StructDecl | ForCStmt | ForInStmt | CompIf | ConstDecl | Attr
+ForStmt | StructDecl | ForCStmt | ForInStmt | CompIf | ConstDecl | Attr | BranchStmt
 // | IncDecStmt k
 // Stand-alone expression in a statement list.
 pub struct ExprStmt {
@@ -111,6 +111,11 @@ pub:
 	args     []Arg
 	is_pub   bool
 	receiver Field
+}
+
+pub struct BranchStmt {
+pub:
+	tok token.Token
 }
 
 pub struct CallExpr {
@@ -235,6 +240,7 @@ pub struct PostfixExpr {
 pub:
 	op   token.Kind
 	expr Expr
+	pos  token.Position
 }
 
 pub struct PrefixExpr {
