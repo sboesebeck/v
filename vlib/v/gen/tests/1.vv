@@ -85,7 +85,7 @@ fn myuser() {
 	x := 1
 	q := x | 0x1004
 	user := User{age:10}
-	age := user.age + 1
+	age := user.age + 1 // crash here
 	boo := 2
 	boo2 := boo+1
 	b := age > 0
@@ -97,6 +97,7 @@ fn multi_return() (int,string) {
 }
 
 fn variadic(a ...int) {
+	//a := path_sep
 }
 
 fn ensure_cap(required int, cap int) {
@@ -104,5 +105,25 @@ fn ensure_cap(required int, cap int) {
 		return
 	}
 }
+
+fn println(s string){}
+
+fn matches() {
+	a := 100
+	match a {
+		10 {
+			println('10')
+		}
+		20 {
+			k := a + 1
+		}
+	}
+}
+
+/*
+const (
+	path_sep = 10
+)
+*/
 
 

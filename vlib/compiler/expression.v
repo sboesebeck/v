@@ -77,6 +77,12 @@ fn (p mut Parser) bool_expression() string {
 	// `as` cast
 	// TODO remove copypasta
 	if p.tok == .key_as {
+		return p.key_as(typ, start_ph)
+	}
+	return typ
+}
+
+fn (p mut Parser) key_as(typ string, start_ph int) string {
 		p.fspace()
 		p.next()
 		p.fspace()
@@ -84,6 +90,8 @@ fn (p mut Parser) bool_expression() string {
 		if typ == cast_typ {
 			p.warn('casting `$typ` to `$cast_typ` is not needed')
 		}
+		is_byteptr := typ == 'byte*' || typ == 'byteptr'
+		is_bytearr := typ == 'array_byte'
 		if typ in p.table.sum_types {
 			T := p.table.find_type(cast_typ)
 			if T.parent != typ {
@@ -104,14 +112,33 @@ exit(1);
 ')
 */
 
-		} else {
+		} else if cast_typ == 'string' {
+			if is_byteptr || is_bytearr {
+					if p.tok == .comma {
+						p.check(.comma)
+						p.cgen.set_placeholder(start_ph, 'tos((byte *)')
+						if is_bytearr {
+							p.gen('.data')
+						}
+						p.gen(', ')
+						p.check_types(p.expression(), 'int')
+					}
+					else {
+						if is_bytearr {
+							p.gen('.data')
+						}
+						p.cgen.set_placeholder(start_ph, '/*!!!*/tos2((byte *)')
+						p.gen(')')
+					}
+				}
+			}
+		else {
+
 			p.cgen.set_placeholder(start_ph, '($cast_typ)(')
 			p.gen(')')
 		}
 		return cast_typ
-	}
-	return typ
-}
+		}
 
 fn (p mut Parser) bterm() string {
 	ph := p.cgen.add_placeholder()
@@ -664,6 +691,11 @@ fn (p mut Parser) expression() string {
 				p.handle_operator('-', typ, 'op_minus', ph, T)
 			}
 		}
+	}
+	// `as` cast
+	// TODO remove copypasta
+	if p.tok == .key_as {
+		return p.key_as(typ, ph)
 	}
 	return typ
 }
