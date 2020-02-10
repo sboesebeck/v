@@ -53,6 +53,7 @@ pub fn parse_stmt(text string, table &table.Table) ast.Stmt {
 	mut p := Parser{
 		scanner: s
 		table: table
+		pref: &pref.Preferences{}
 	}
 	p.init_parse_fns()
 	p.read_first_token()
@@ -70,12 +71,13 @@ pub fn parse_file(path string, table &table.Table) ast.File {
 		table: table
 		file_name: path
 		pref: &pref.Preferences{}
-		builtin_mod: true
 	}
 	p.read_first_token()
 	// module decl
 	module_decl := if p.tok.kind == .key_module { p.module_decl() } else { ast.Module{name: 'main'
 	} }
+	p.mod = module_decl.name
+	p.builtin_mod = p.mod == 'builtin'
 	// imports
 	mut imports := []ast.Import
 	for p.tok.kind == .key_import {
@@ -456,21 +458,14 @@ pub fn (p mut Parser) name_expr() (ast.Expr,table.TypeRef) {
 		p.check(.dot)
 	}
 	if p.tok.lit == 'map' && p.peek_tok.kind == .lsbr {
-		p.next()
-		p.check(.lsbr)
-		key_type := p.check_name()
-		if key_type != 'string' {
-			p.error('maps can only have string keys for now')
-		}
-		p.check(.rsbr)
-		p.check_name()
+		map_type := p.parse_map_type(0)
 		return node,typ
 	}
 	// fn call or type cast
 	if p.peek_tok.kind == .lpar {
 		name := p.tok.lit
 		// type cast. TODO: finish
-		if name in p.table.type_idxs {
+		if name in table.builtin_type_names {
 			// ['byte', 'string', 'int']
 			// SKIP FOR NOW
 			mut par_d := 0
@@ -1053,25 +1048,29 @@ fn (p mut Parser) struct_decl() ast.StructDecl {
 		}
 		fields << table.Field{
 			name: field_name
-			// type_idx: ti.idx
-			
 			typ: typ
 		}
 		// println('struct field $ti.name $field_name')
 	}
 	p.check(.rcbr)
-	if name != 'string' {
-		ret := p.table.register_type(table.Type{
-			parent: 0
-			kind: .struct_
-			name: name
-			info: table.Struct{
-				fields: fields
-			}
-		})
-		if ret == -1 {
-			p.error('cannot register type `$name`, another type with this name exists')
+	t := table.Type{
+		parent: 0
+		kind: .struct_
+		name: name
+		info: table.Struct{
+			fields: fields
 		}
+	}
+	mut ret := 0
+	if p.builtin_mod && t.name in table.builtin_type_names {
+		// this allows overiding the builtins type
+		// with the real struct type info parsed from builtin
+		ret = p.table.register_builtin_type(t)
+	} else {
+		ret = p.table.register_type(t)
+	}
+	if ret == -1 {
+		p.error('cannot register type `$name`, another type with this name exists')
 	}
 	return ast.StructDecl{
 		name: name
@@ -1250,6 +1249,7 @@ fn (p mut Parser) add_unresolved(key string, expr ast.Expr) table.TypeRef {
 		idx = p.table.unresolved_idxs[key]
 	}
 	else {
+		p.table.unresolved_idxs[key] = idx
 		p.unresolved << expr
 	}
 	t := table.TypeRef{

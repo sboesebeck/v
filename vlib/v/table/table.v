@@ -27,6 +27,7 @@ pub:
 	name        string
 	args        []Var
 	return_type TypeRef
+	is_variadic bool
 	is_c        bool
 }
 
@@ -201,6 +202,11 @@ pub fn (t &Table) register_method(typ &Type, new_fn Fn) bool {
 	return true
 }
 
+pub fn (t mut Table) new_tmp_var() string {
+	t.tmp_cnt++
+	return 'tmp$t.tmp_cnt'
+}
+
 pub fn (t &Type) has_method(name string) bool {
 	t.find_method(name) or {
 		return false
@@ -217,9 +223,26 @@ pub fn (t &Type) find_method(name string) ?Fn {
 	return none
 }
 
-pub fn (t mut Table) new_tmp_var() string {
-	t.tmp_cnt++
-	return 'tmp$t.tmp_cnt'
+
+pub fn (s &Type) has_field(name string) bool {
+	s.find_field(name) or {
+		return false
+	}
+	return true
+}
+
+pub fn (s &Type) find_field(name string) ?Field {
+	match s.info {
+		Struct {
+		    for field in it.fields {
+				if field.name == name {
+					return field
+				}
+			}
+		}
+		else {}
+	}
+	return none
 }
 
 pub fn (t &Table) struct_has_field(s &Type, name string) bool {
@@ -229,9 +252,6 @@ pub fn (t &Table) struct_has_field(s &Type, name string) bool {
 	else {
 		println('struct_has_field($s.name, $name) types.len=$t.types.len s.parent=none')
 	}
-	// for typ in t.types {
-	// println('$typ.idx $typ.name')
-	// }
 	if _ := t.struct_find_field(s, name) {
 		return true
 	}
@@ -245,21 +265,13 @@ pub fn (t &Table) struct_find_field(s &Type, name string) ?Field {
 	else {
 		println('struct_find_field($s.name, $name) types.len=$t.types.len s.parent=none')
 	}
-	info := s.info as Struct
-	for field in info.fields {
-		if field.name == name {
-			return field
-		}
+	if field := s.find_field(name) {
+		return field
 	}
 	if !isnil(s.parent) {
-		if s.parent.kind == .struct_ {
-			parent_info := s.parent.info as Struct
+		if field := s.parent.find_field(name) {
 			println('got parent $s.parent.name')
-			for field in parent_info.fields {
-				if field.name == name {
-					return field
-				}
-			}
+			return field
 		}
 	}
 	return none
@@ -277,6 +289,22 @@ pub fn (t &Table) find_type(name string) ?Type {
 		return t.types[idx]
 	}
 	return none
+}
+
+// this will override or register builtin type
+// allows prexisitng types added in register_builtins
+// to be overriden with their real type info
+[inline]
+pub fn (t mut Table) register_builtin_type(typ Type) int {
+	existing_idx := t.type_idxs[typ.name]
+	if existing_idx > 0 {
+		if existing_idx >= string_type_idx {
+			existing_type := t.types[existing_idx]
+			t.types[existing_idx] = { typ | kind: existing_type.kind }
+		}
+		return existing_idx
+	}
+	return t.register_type(typ)
 }
 
 [inline]
@@ -325,7 +353,7 @@ pub fn (t mut Table) find_or_register_map(key_type TypeRef, value_type TypeRef) 
 	}
 	// register
 	map_type := Type{
-		parent: &t.types[t.type_idxs['map']]
+		parent: &t.types[map_type_idx]
 		kind: .map
 		name: name
 		info: Map{
@@ -345,7 +373,7 @@ pub fn (t mut Table) find_or_register_array(elem_type TypeRef, nr_dims int) int 
 	}
 	// register
 	array_type := Type{
-		parent: &t.types[t.type_idxs['array']]
+		parent: &t.types[array_type_idx]
 		kind: .array
 		name: name
 		info: Array{
@@ -399,25 +427,6 @@ pub fn (t mut Table) find_or_register_multi_return(mr_typs []TypeRef) int {
 	return t.register_type(mr_type)
 }
 
-pub fn (t mut Table) find_or_register_variadic(variadic_typ TypeRef) int {
-	name := 'variadic_$variadic_typ.typ.name'
-	// existing
-	existing_idx := t.type_idxs[name]
-	if existing_idx > 0 {
-		return existing_idx
-	}
-	// register
-	variadic_type := Type{
-		parent: 0
-		kind: .variadic
-		name: name
-		info: Variadic{
-			typ: variadic_typ
-		}
-	}
-	return t.register_type(variadic_type)
-}
-
 pub fn (t mut Table) add_placeholder_type(name string) int {
 	ph_type := Type{
 		parent: 0
@@ -431,6 +440,9 @@ pub fn (t mut Table) add_placeholder_type(name string) int {
 pub fn (t &Table) check(got, expected &TypeRef) bool {
 	println('check: $got.typ.name, $expected.typ.name')
 	if expected.typ.kind == .voidptr {
+		return true
+	}
+	if expected.typ.kind in [.voidptr, .byteptr, .charptr] && got.typ.kind == .int {
 		return true
 	}
 	if expected.typ.kind == .byteptr && got.typ.kind == .voidptr {
