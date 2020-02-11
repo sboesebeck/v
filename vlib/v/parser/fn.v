@@ -8,7 +8,7 @@ import (
 	v.table
 )
 
-pub fn (p mut Parser) call_expr() (ast.CallExpr,table.TypeRef) {
+pub fn (p mut Parser) call_expr() (ast.CallExpr,table.Type) {
 	tok := p.tok
 	fn_name := p.check_name()
 	p.check(.lpar)
@@ -18,6 +18,7 @@ pub fn (p mut Parser) call_expr() (ast.CallExpr,table.TypeRef) {
 		name: fn_name
 		args: args
 		// tok: tok
+		
 		pos: tok.position()
 	}
 	if p.tok.kind == .key_orelse {
@@ -64,7 +65,7 @@ fn (p mut Parser) fn_decl() ast.FnDecl {
 	// Receiver?
 	mut rec_name := ''
 	mut is_method := false
-	mut rec_type := p.table.type_ref(table.void_type_idx)
+	mut rec_type := table.void_type
 	if p.tok.kind == .lpar {
 		is_method = true
 		p.next()
@@ -121,7 +122,7 @@ fn (p mut Parser) fn_decl() ast.FnDecl {
 				typ: arg_type
 			}
 			args << arg
-			//p.table.register_var(arg)
+			// p.table.register_var(arg)
 			ast_args << ast.Arg{
 				name: arg_name
 				typ: arg_type
@@ -156,7 +157,7 @@ fn (p mut Parser) fn_decl() ast.FnDecl {
 					name: arg_name
 					typ: typ
 				}
-				//if typ.typ.kind == .variadic && p.tok.kind == .comma {
+				// if typ.typ.kind == .variadic && p.tok.kind == .comma {
 				if is_variadic && p.tok.kind == .comma {
 					p.error('cannot use ...(variadic) with non-final parameter $arg_name')
 				}
@@ -168,7 +169,7 @@ fn (p mut Parser) fn_decl() ast.FnDecl {
 	}
 	p.check(.rpar)
 	// Return type
-	mut typ := p.table.type_ref(table.void_type_idx)
+	mut typ := table.void_type
 	if p.tok.kind in [.name, .lpar, .amp, .lsbr, .question] {
 		typ = p.parse_type()
 		p.return_type = typ
@@ -178,7 +179,8 @@ fn (p mut Parser) fn_decl() ast.FnDecl {
 		p.return_type = typ
 	}
 	if is_method {
-		ok := p.table.register_method(rec_type.typ, table.Fn{
+		type_sym := p.table.get_type_symbol(rec_type)
+		ok := p.table.register_method(type_sym, table.Fn{
 			name: name
 			args: args
 			return_type: typ
