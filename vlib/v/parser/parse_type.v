@@ -67,8 +67,13 @@ pub fn (p mut Parser) parse_multi_return_type() table.Type {
 }
 
 pub fn (p mut Parser) parse_fn_type() table.Type {
-	// p.check(.key_fn)
-	p.fn_decl()
+	p.warn('parrse fn')
+	p.check(.key_fn)
+	// p.fn_decl()
+	p.fn_args()
+	if p.tok.kind.is_start_of_type() {
+		p.parse_type()
+	}
 	return table.int_type
 }
 
@@ -84,6 +89,16 @@ pub fn (p mut Parser) parse_type() table.Type {
 	}
 	if p.tok.kind == .question {
 		p.next()
+	}
+	// `module.Type`
+	if p.peek_tok.kind == .dot {
+		// /if !(p.tok.lit in p.table.imports) {
+		if !p.table.known_import(p.tok.lit) {
+			println(p.table.imports)
+			p.error('unknown module `$p.tok.lit`')
+		}
+		p.next()
+		p.check(.dot)
 	}
 	name := p.tok.lit
 	match p.tok.kind {
