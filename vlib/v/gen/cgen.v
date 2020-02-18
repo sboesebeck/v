@@ -13,6 +13,7 @@ struct Gen {
 	table       &table.Table
 mut:
 	fn_decl     &ast.FnDecl // pointer to the FnDecl we are currently inside otherwise 0
+	tmp_count   int
 }
 
 pub fn cgen(files []ast.File, table &table.Table) string {
@@ -24,10 +25,7 @@ pub fn cgen(files []ast.File, table &table.Table) string {
 		fn_decl: 0
 	}
 	for file in files {
-		for stmt in file.stmts {
-			g.stmt(stmt)
-			g.writeln('')
-		}
+		g.stmts(file.stmts)
 	}
 	return g.definitions.str() + g.out.str()
 }
@@ -40,6 +38,15 @@ pub fn (g mut Gen) write(s string) {
 
 pub fn (g mut Gen) writeln(s string) {
 	g.out.writeln(s)
+}
+
+pub fn (g mut Gen) new_tmp_var() string {
+	g.tmp_count++
+	return 'tmp$g.tmp_count'
+}
+
+pub fn (g mut Gen) reset_tmp_count() {
+	g.tmp_count = 0
 }
 
 fn (g mut Gen) stmts(stmts []ast.Stmt) {
@@ -63,6 +70,7 @@ fn (g mut Gen) stmt(node ast.Stmt) {
 			}
 		}
 		ast.FnDecl {
+			g.reset_tmp_count()
 			g.fn_decl = it // &it
 			is_main := it.name == 'main'
 			if is_main {
@@ -76,7 +84,7 @@ fn (g mut Gen) stmt(node ast.Stmt) {
 			for i, arg in it.args {
 				arg_type_sym := g.table.get_type_symbol(arg.typ)
 				mut arg_type_name := arg_type_sym.name
-				if i == it.args.len-1 && it.is_variadic {
+				if i == it.args.len - 1 && it.is_variadic {
 					arg_type_name = 'variadic_$arg_type_sym.name'
 				}
 				g.write(arg_type_name + ' ' + arg.name)
@@ -194,10 +202,22 @@ fn (g mut Gen) stmt(node ast.Stmt) {
 fn (g mut Gen) expr(node ast.Expr) {
 	// println('cgen expr()')
 	match node {
+		ast.ArrayInit {
+			type_sym := g.table.get_type_symbol(it.typ)
+			g.writeln('new_array_from_c_array($it.exprs.len, $it.exprs.len, sizeof($type_sym.name), {\t')
+			for expr in it.exprs {
+				g.expr(expr)
+				g.write(', ')
+			}
+			g.write('\n})')
+		}
 		ast.AssignExpr {
 			g.expr(it.left)
 			g.write(' $it.op.str() ')
 			g.expr(it.val)
+		}
+		ast.BoolLiteral {
+			g.write(it.val.str())
 		}
 		ast.IntegerLiteral {
 			g.write(it.val.str())
@@ -263,25 +283,8 @@ fn (g mut Gen) expr(node ast.Expr) {
 			g.write(')')
 		}
 		ast.MethodCallExpr {}
-		ast.ArrayInit {
-			type_sym := g.table.get_type_symbol(it.typ)
-			g.writeln('new_array_from_c_array($it.exprs.len, $it.exprs.len, sizeof($type_sym.name), {\t')
-			for expr in it.exprs {
-				g.expr(expr)
-				g.write(', ')
-			}
-			g.write('\n})')
-		}
 		ast.Ident {
 			g.write('$it.name')
-		}
-		ast.BoolLiteral {
-			if it.val == true {
-				g.write('true')
-			}
-			else {
-				g.write('false')
-			}
 		}
 		ast.SelectorExpr {
 			g.expr(it.expr)
@@ -294,11 +297,10 @@ fn (g mut Gen) expr(node ast.Expr) {
 		ast.IfExpr {
 			// If expression? Assign the value to a temp var.
 			// Previously ?: was used, but it's too unreliable.
-			// ti := g.table.refresh_ti(it.ti)
 			type_sym := g.table.get_type_symbol(it.typ)
 			mut tmp := ''
 			if type_sym.kind != .void {
-				tmp = g.table.new_tmp_var()
+				tmp = g.new_tmp_var()
 				// g.writeln('$ti.name $tmp;')
 			}
 			g.write('if (')
@@ -325,7 +327,7 @@ fn (g mut Gen) expr(node ast.Expr) {
 			type_sym := g.table.get_type_symbol(it.typ)
 			mut tmp := ''
 			if type_sym.kind != .void {
-				tmp = g.table.new_tmp_var()
+				tmp = g.new_tmp_var()
 			}
 			g.write('$type_sym.name $tmp = ')
 			g.expr(it.cond)

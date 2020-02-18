@@ -3,6 +3,7 @@ module main
 import (
 	os
 	os.cmdline
+	filepath
 	testing
 )
 
@@ -22,8 +23,8 @@ pub fn main() {
 	}
 
 	args_to_executable := args[1..]
-	args_before := cmdline.before(args_to_executable, ['test'])
-	args_after := cmdline.after(args_to_executable, ['test'])
+	args_before := cmdline.options_before(args_to_executable, ['test'])
+	args_after := cmdline.options_after(args_to_executable, ['test'])
 
 	if args_after.join(' ') == 'v' {
 		eprintln('`v test v` has been deprecated.')
@@ -39,7 +40,7 @@ pub fn main() {
 		}
 		if os.is_dir(targ) {
 			// Fetch all tests from the directory
-			ts.files << os.walk_ext( targ.trim_right(os.path_separator), '_test.v')
+			ts.files << os.walk_ext( targ.trim_right(filepath.separator), '_test.v')
 			continue
 		}
 		println('Unrecognized test file $targ .')
@@ -53,4 +54,3 @@ pub fn main() {
 		exit(1)
 	}
 }
-

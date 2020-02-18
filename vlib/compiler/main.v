@@ -65,9 +65,10 @@ pub fn new_v(pref &pref.Preferences) &V {
 
 	mut vgen_buf := strings.new_builder(1000)
 	vgen_buf.writeln('module vgen\nimport strings')
+	compiled_dir:=if os.is_dir(rdir) { rdir } else { filepath.dir(rdir) }
 
 	return &V{
-		compiled_dir: if os.is_dir(rdir) { rdir } else { filepath.dir(rdir) }
+		compiled_dir:compiled_dir// if os.is_dir(rdir) { rdir } else { filepath.dir(rdir) }
 		table: new_table(pref.obfuscate)
 		out_name_c: out_name_c
 		cgen: new_cgen(out_name_c)
@@ -680,8 +681,8 @@ pub fn (v mut V) add_v_files_to_compile() {
 		}
 		// use cached built module if exists
 		if v.pref.vpath != '' && v.pref.build_mode != .build_module && !mod.contains('vweb') {
-			mod_path := mod.replace('.', os.path_separator)
-			vh_path := '$v_modules_path${os.path_separator}vlib${os.path_separator}${mod_path}.vh'
+			mod_path := mod.replace('.', filepath.separator)
+			vh_path := '$v_modules_path${filepath.separator}vlib${filepath.separator}${mod_path}.vh'
 			if v.pref.is_cache && os.exists(vh_path) {
 				eprintln('using cached module `$mod`: $vh_path')
 				v.cached_mods << mod
@@ -923,5 +924,5 @@ pub fn set_vroot_folder(vroot_path string) {
 	// VEXE env variable is needed so that compiler.vexe_path()
 	// can return it later to whoever needs it:
 	vname := if os.user_os() == 'windows' { 'v.exe' } else { 'v' }
-	os.setenv('VEXE', os.realpath([vroot_path, vname].join(os.path_separator)), true)
+	os.setenv('VEXE', os.realpath([vroot_path, vname].join(filepath.separator)), true)
 }

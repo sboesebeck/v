@@ -20,7 +20,7 @@ pub fn new_v(args []string) &compiler.V {
 		os.mkdir(compiler.v_modules_path)or{
 			panic(err)
 		}
-		os.mkdir('$compiler.v_modules_path${os.path_separator}cache')or{
+		os.mkdir('$compiler.v_modules_path${filepath.separator}cache')or{
 			panic(err)
 		}
 	}
@@ -39,7 +39,7 @@ pub fn new_v(args []string) &compiler.V {
 	mut out_name := cmdline.option(args, '-o', '')
 	mut dir := args.last()
 	if 'run' in args {
-		args_after_run := cmdline.only_non_options( cmdline.after(args,['run']) )
+		args_after_run := cmdline.only_non_options( cmdline.options_after(args,['run']) )
 		dir = if args_after_run.len>0 { args_after_run[0] } else { '' }
 	}
 	if dir == 'v.v' {
@@ -47,10 +47,10 @@ pub fn new_v(args []string) &compiler.V {
 		println('use `v -o v cmd/v` instead of `v -o v v.v`')
 		exit(1)
 	}
-	if dir.ends_with(os.path_separator) {
-		dir = dir.all_before_last(os.path_separator)
+	if dir.ends_with(filepath.separator) {
+		dir = dir.all_before_last(filepath.separator)
 	}
-	if dir.starts_with('.$os.path_separator') {
+	if dir.starts_with('.$filepath.separator') {
 		dir = dir[2..]
 	}
 	if args.len < 2 {
@@ -65,8 +65,8 @@ pub fn new_v(args []string) &compiler.V {
 		build_mode = .build_module
 		os.chdir(vroot)
 		// v build module ~/v/os => os.o
-		mod_path := if dir.contains('vlib') { dir.all_after('vlib' + os.path_separator) } else if dir.starts_with('.\\') || dir.starts_with('./') { dir[2..] } else if dir.starts_with(os.path_separator) { dir.all_after(os.path_separator) } else { dir }
-		mod = mod_path.replace(os.path_separator, '.')
+		mod_path := if dir.contains('vlib') { dir.all_after('vlib' + filepath.separator) } else if dir.starts_with('.\\') || dir.starts_with('./') { dir[2..] } else if dir.starts_with(filepath.separator) { dir.all_after(filepath.separator) } else { dir }
+		mod = mod_path.replace(filepath.separator, '.')
 		println('Building module "${mod}" (dir="$dir")...')
 		// out_name = '$TmpPath/vlib/${base}.o'
 		if !out_name.ends_with('.c') {
@@ -84,8 +84,8 @@ pub fn new_v(args []string) &compiler.V {
 
 	}
 	// `v -o dir/exec`, create "dir/" if it doesn't exist
-	if out_name.contains(os.path_separator) {
-		d := out_name.all_before_last(os.path_separator)
+	if out_name.contains(filepath.separator) {
+		d := out_name.all_before_last(filepath.separator)
 		if !os.is_dir(d) {
 			println('creating a new directory "$d"')
 			os.mkdir(d)or{
@@ -95,9 +95,8 @@ pub fn new_v(args []string) &compiler.V {
 	}
 
 	// println('VROOT=$vroot')
-	cflags := cmdline.many_values(args, '-cflags').join(' ')
-
-	defines := cmdline.many_values(args, '-d')
+	cflags := cmdline.options(args, '-cflags').join(' ')
+	defines := cmdline.options(args, '-d')
 	compile_defines, compile_defines_all := parse_defines( defines )
 
 	rdir := os.realpath(dir)
@@ -169,7 +168,7 @@ pub fn new_v(args []string) &compiler.V {
 	pref.fill_with_defaults()
 
 	// v.exe's parent directory should contain vlib
-	if !os.is_dir(pref.vlib_path) || !os.is_dir(pref.vlib_path + os.path_separator + 'builtin') {
+	if !os.is_dir(pref.vlib_path) || !os.is_dir(pref.vlib_path + filepath.separator + 'builtin') {
 		// println('vlib not found, downloading it...')
 		/*
 		ret := os.system('git clone --depth=1 https://github.com/vlang/v .')
@@ -194,7 +193,7 @@ pub fn new_v(args []string) &compiler.V {
 }
 
 fn find_c_compiler_thirdparty_options(args []string) string {
-	mut cflags := cmdline.many_values(args,'-cflags')
+	mut cflags := cmdline.options(args, '-cflags')
 	$if !windows {
 		cflags << '-fPIC'
 	}
@@ -226,4 +225,3 @@ fn parse_defines(defines []string) ([]string,[]string) {
 	}
 	return compile_defines, compile_defines_all
 }
-

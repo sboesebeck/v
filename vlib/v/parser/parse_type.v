@@ -78,6 +78,13 @@ pub fn (p mut Parser) parse_fn_type() table.Type {
 }
 
 pub fn (p mut Parser) parse_type() table.Type {
+	// optional
+	mut is_optional := false
+	if p.tok.kind == .question {
+		p.next()
+		is_optional = true
+	}
+	// &Type
 	mut nr_muls := 0
 	for p.tok.kind == .amp {
 		p.check(.amp)
@@ -90,6 +97,7 @@ pub fn (p mut Parser) parse_type() table.Type {
 	if p.tok.kind == .question {
 		p.next()
 	}
+	mut name := p.tok.lit
 	// `module.Type`
 	if p.peek_tok.kind == .dot {
 		// /if !(p.tok.lit in p.table.imports) {
@@ -99,8 +107,13 @@ pub fn (p mut Parser) parse_type() table.Type {
 		}
 		p.next()
 		p.check(.dot)
+		name += '.' + p.tok.lit
 	}
-	name := p.tok.lit
+	// `Foo` in module `mod` means `mod.Foo`
+	else if p.mod != 'main' && !(name in table.builtin_type_names) {
+		name = p.mod + '.' + name
+	}
+	// p.warn('get type $name')
 	match p.tok.kind {
 		// func
 		.key_fn {

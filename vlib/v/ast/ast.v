@@ -8,14 +8,24 @@ import (
 	v.table
 )
 
-pub type Expr = InfixExpr | IfExpr | StringLiteral | IntegerLiteral | CharLiteral |
-FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr |
-AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr | RangeExpr | MatchExpr |
-CastExpr | EnumVal
+pub type Expr = InfixExpr | IfExpr | StringLiteral | IntegerLiteral | CharLiteral | 	
+FloatLiteral | Ident | CallExpr | BoolLiteral | StructInit | ArrayInit | SelectorExpr | PostfixExpr | 	
+AssignExpr | PrefixExpr | MethodCallExpr | IndexExpr | RangeExpr | MatchExpr | 	
+CastExpr | EnumVal | Assoc | SizeOf
 
-pub type Stmt = VarDecl | GlobalDecl | FnDecl | Return | Module | Import | ExprStmt |
-ForStmt | StructDecl | ForCStmt | ForInStmt | CompIf | ConstDecl | Attr | BranchStmt |
-HashStmt | AssignStmt | EnumDecl | TypeDecl | DeferStmt
+pub type Stmt = VarDecl | GlobalDecl | FnDecl | Return | Module | Import | ExprStmt | 	
+ForStmt | StructDecl | ForCStmt | ForInStmt | CompIf | ConstDecl | Attr | BranchStmt | 	
+HashStmt | AssignStmt | EnumDecl | TypeDecl | DeferStmt | GotoLabel | GotoStmt | 	
+LineComment | MultiLineComment
+
+pub type Type = StructType | ArrayType
+
+pub struct StructType {
+	fields []Field
+}
+
+pub struct ArrayType {}
+
 // | IncDecStmt k
 // Stand-alone expression in a statement list.
 pub struct ExprStmt {
@@ -70,7 +80,9 @@ pub struct Field {
 pub:
 	name string
 	// type_idx int
+mut:
 	typ  table.Type
+	// typ2 Type
 }
 
 pub struct ConstDecl {
@@ -119,6 +131,8 @@ pub:
 	is_pub      bool
 	is_variadic bool
 	receiver    Field
+	is_method   bool
+	rec_mut     bool // is receiver mutable
 }
 
 pub struct BranchStmt {
@@ -134,6 +148,7 @@ mut:
 // func       Expr
 	name string
 	args []Expr
+	is_c bool
 }
 
 pub struct MethodCallExpr {
@@ -193,27 +208,32 @@ pub:
 
 pub struct File {
 pub:
-	path       string
-	mod        Module
-	imports    []Import
-	stmts      []Stmt
-	unresolved []Expr
+	path    string
+	mod     Module
+	imports []Import
+	stmts   []Stmt
+	scope   Scope
+}
+
+pub struct IdentFunc {
+pub mut:
+	return_type table.Type
 }
 
 pub struct IdentVar {
 pub mut:
 	typ    table.Type
 	is_mut bool
-	// name string
 }
 
-type IdentInfo = IdentVar
+type IdentInfo = IdentFunc | IdentVar
 
 pub enum IdentKind {
+	unresolved
 	blank_ident
 	variable
 	constant
-	func
+	function
 }
 
 // A single identifier
@@ -292,9 +312,10 @@ pub:
 	cond       Expr
 	stmts      []Stmt
 	else_stmts []Stmt
-	typ        table.Type
 	left       Expr // `a` in `a := if ...`
 	pos        token.Position
+mut:
+	typ        table.Type
 }
 
 pub struct MatchExpr {
@@ -303,8 +324,9 @@ pub:
 	cond        Expr
 	blocks      []StmtBlock
 	match_exprs []Expr
-	typ         table.Type
 	pos         token.Position
+mut:
+	typ         table.Type
 }
 
 pub struct CompIf {
@@ -326,6 +348,7 @@ pub:
 	var   string
 	cond  Expr
 	stmts []Stmt
+	pos   token.Position
 }
 
 pub struct ForCStmt {
@@ -379,15 +402,15 @@ pub:
 	vals   []string
 }
 
-pub struct TypeDecl{
+pub struct TypeDecl {
 pub:
 	name   string
 	is_pub bool
 }
 
-pub struct DeferStmt{
+pub struct DeferStmt {
 pub:
-stmts []Stmt
+	stmts []Stmt
 }
 
 pub struct AssignExpr {
@@ -396,6 +419,16 @@ pub:
 	pos  token.Position
 	left Expr
 	val  Expr
+}
+
+pub struct GotoLabel {
+pub:
+	name string
+}
+
+pub struct GotoStmt {
+pub:
+	name string
 }
 
 pub struct ArrayInit {
@@ -417,6 +450,26 @@ pub struct CastExpr {
 pub:
 	typ  table.Type
 	expr Expr
+}
+
+pub struct Assoc {
+pub:
+	name string
+}
+
+pub struct SizeOf {
+pub:
+	type_name string
+}
+
+pub struct LineComment {
+pub:
+	text string
+}
+
+pub struct MultiLineComment {
+pub:
+	text string
 }
 
 // string representaiton of expr
